@@ -4,7 +4,8 @@ WORKDIR /app
 
 COPY package*.json ./
 
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm \
+  npm ci
 
 COPY . .
 
@@ -16,7 +17,8 @@ ENV NODE_ENV=production
 
 COPY package*.json ./
 
-RUN npm install --omit=dev
+RUN --mount=type=cache,target=/root/.npm \
+  npm ci --omit=dev
 
 COPY --from=builder /app/src ./src
 
