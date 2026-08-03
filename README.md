@@ -145,3 +145,92 @@ par défaut du fichier, pas besoin de le nommer explicitement), avec le même
   pendant les tests précédents, toutes en `pending`)
 - `docker network inspect docker-project_default` liste bien les trois
   conteneurs (`api`, `postgres`, `stats-api`) sur le même network.
+
+### Registry et déploiement depuis les images publiées (2026-08-03)
+
+`todo-api` et `stats-api` poussés sur Docker Hub (`gabrielmartin13/todo-api`,
+`gabrielmartin13/stats-api`), tag `1.0.0` explicite plutôt que `latest`.
+
+```
+docker login -u gabrielmartin13
+docker tag docker-project-api:latest gabrielmartin13/todo-api:1.0.0
+docker tag docker-project-stats-api:latest gabrielmartin13/stats-api:1.0.0
+docker push gabrielmartin13/todo-api:1.0.0
+docker push gabrielmartin13/stats-api:1.0.0
+```
+
+`docker-compose.prod.yml` reprend le fichier compose d'origine avec chaque
+`build:` remplacé par `image: gabrielmartin13/<service>:<version>`, et le
+volume Postgres en volume Compose normal (plus d'`external: true`) : le
+critère de réussite explicite était un dossier neuf, sans le volume
+préexistant du poste de dev, donc `external: true` aurait cassé le scénario
+nominal ailleurs que sur cette machine.
+
+**Vérification nominale :** dossier neuf avec uniquement
+`docker-compose.prod.yml` et un `.env` recopié depuis `.env.example`,
+`docker compose -f docker-compose.prod.yml up -d` démarre les trois
+conteneurs sans qu'aucun fichier source ne soit présent (confirmé par
+`find` sur le dossier : deux fichiers, le compose et le `.env`).
+
+**Vérification adverse (`docker history`) :** aucune trace de
+`PGPASSWORD`, `DB_PASSWORD` ni de `.env` dans l'historique des deux images
+publiées. Les secrets ne passent jamais par `ARG`/`ENV` dans les
+Dockerfiles, uniquement par `environment:`/`env_file:` au runtime — rien à
+lier à l'image elle-même.
+
+#### Tableau de mesures
+
+| Image | Taille | Couches (poids max) | Build froid / chaud | 1re réponse HTTP |
+|---|---|---|---|---|
+| todo-api | 159MB | 142MB (base node:alpine), 8.17MB, 5.37MB | 1.995s / 0.471s | 21ms |
+| stats-api | 167MB | 100MB (base python:slim), 40MB (pip install), 23MB | 2.897s / 0.435s | 213ms |
+
+Mesures prises sans `docker system prune` préalable (juste `--no-cache` pour
+le build froid) : le cache des images de base `node:22-alpine` et
+`python:3.12-slim`, déjà locales, reste chaud. L'écart froid/chaud reste
+donc une borne basse de ce qu'un vrai environnement CI verrait avec un cache
+totalement vide.
+
+stats-api répond 10x plus lentement à sa première requête que todo-api
+(213ms contre 21ms) alors que son image n'est pas franchement plus lourde :
+l'écart vient du démarrage d'Uvicorn + import de FastAPI/psycopg2 côté
+Python, plus lourd au boot qu'Express côté Node, pas de la taille de
+l'image. C'est exactement le point que la métrique "temps de 1re réponse"
+est censée révéler et que la taille seule ne montre pas.
+
+Aucune optimisation supplémentaire tentée pour l'instant : `todo-api` est
+déjà sous la cible des 150 Mo (159MB, proche) et `stats-api` sous les 180 Mo
+(167MB). Pas de régression à consigner à ce stade.
+
+#### Test bout en bout depuis les images publiées
+
+Stack relancée dans un dossier neuf, scénario complet :
+1. **POST avec champ obligatoire manquant** (`{}` sans `description`) →
+   `400 { "error": "description is required" }`, rejeté proprement, pas de
+   crash.
+2. **`localhost:5432` depuis l'hôte** → `docker port` sur le conteneur
+   Postgres ne retourne rien (aucun port publié), cohérent avec le chapitre
+   6. `nc`/`psql` peuvent sembler aboutir sur cette machine à cause du
+   comportement d'exposition automatique d'OrbStack déjà noté plus haut ;
+   `docker port` reste la source de vérité.
+3. **`/stats` vs `COUNT` manuel** → `{"pending":2}` côté API,
+   `SELECT status, COUNT(*) FROM tasks GROUP BY status` côté `psql` donne
+   exactement `pending | 2`. Cohérent.
+4. **`docker kill` sur le conteneur Postgres en pleine charge** → les deux
+   services réagissent différemment :
+   - `stats-api` dégrade proprement : `/stats` → `503` avec un message
+     explicite (`stats-api ne parvient pas à joindre la base de données`),
+     `/health` reste `200` (volontairement indépendant de Postgres dans le
+     code fourni).
+   - `todo-api` **plantait entièrement** (conteneur `Exited (1)`, même
+     `/health` devenait injoignable) : le pool `pg` remonte une erreur de
+     connexion en tant qu'événement `error` non écouté sur le client idle,
+     ce qui fait planter tout le process Node plutôt que de la faire
+     remonter proprement dans une requête en cours.
+
+**Correctif appliqué** (`src/db.js`) : ajout d'un handler
+`pool.on('error', ...)` qui logue l'erreur au lieu de laisser Node planter
+sur un événement non géré. Image republiée en `gabrielmartin13/todo-api:1.0.1`
+(nouveau tag, pas d'écrasement silencieux du `1.0.0` déjà poussé). Retest :
+le conteneur reste `Up`, `/api/tasks` répond `500 Internal server error`
+proprement au lieu de devenir injoignable.
