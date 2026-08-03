@@ -8,6 +8,10 @@ const pool = new Pool({
   database: process.env.PGDATABASE,
 });
 
+pool.on('error', (err) => {
+  console.error('Unexpected postgres pool error', err);
+});
+
 const ready = pool.query(`
   CREATE TABLE IF NOT EXISTS tasks (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
