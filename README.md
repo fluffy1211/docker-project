@@ -49,3 +49,46 @@ Cinq options à la main sur une seule ligne de commande (image, 3 variables
 d'env, volume) rien que pour Postgres, plus la manip pour retrouver l'IP à
 chaque recréation : ça fait beaucoup d'étapes manuelles et fragiles comparé à
 ce qu'on imagine possible avec un seul fichier déclaratif.
+
+### Network custom (2026-08-03)
+
+L'IP interne trouvée à l'étape précédente est fragile (change si le conteneur
+est recréé) et rien n'empêchait de publier le port Postgres vers l'hôte par
+erreur. Correction : un network Docker créé explicitement, API et base dessus,
+connexion par nom de conteneur.
+
+**Commande utilisée :**
+```
+docker network create todo-network
+```
+
+Nom retenu : `todo-network`.
+
+Postgres relancé sur ce network, toujours sans `-p` (le port 5432 n'a jamais
+été publié vers l'hôte, y compris avant cette étape) :
+```
+docker run -d --name todo-postgres \
+  --network todo-network \
+  -e POSTGRES_DB=todo \
+  -e POSTGRES_USER=todo \
+  -e POSTGRES_PASSWORD=todo_pw \
+  -v todo-postgres-data:/var/lib/postgresql/data \
+  postgres:16-alpine
+```
+
+`.env` : `PGHOST` passe de l'IP interne à `todo-postgres` (le nom du
+conteneur, résolu via le DNS interne du network custom).
+
+**Vérifications :**
+- Toutes les routes CRUD répondent normalement via l'API connectée par nom
+  de conteneur (`GET`/`POST /api/tasks` testés).
+- Tentative de connexion à Postgres depuis l'hôte : `nc -zv localhost 5432`
+  a d'abord semblé réussir alors qu'aucun `-p` n'est présent sur la commande
+  Postgres. En cause : OrbStack expose automatiquement les ports des
+  conteneurs sur l'hôte, indépendamment de `-p` — un comportement propre à
+  OrbStack, pas au moteur Docker standard. Avec Docker Desktop/Engine
+  classique, `nc -zv localhost 5432` renverrait `Connection refused` : sans
+  `-p`, le port n'existe simplement pas côté hôte. Sur cet environnement,
+  c'est donc l'absence de `-p` dans la commande `docker run` (vérifiable
+  avec `docker port todo-postgres`, qui ne retourne rien) qui fait foi, pas
+  le résultat de `nc`.
