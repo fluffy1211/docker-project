@@ -92,3 +92,30 @@ conteneur, résolu via le DNS interne du network custom).
   c'est donc l'absence de `-p` dans la commande `docker run` (vérifiable
   avec `docker port todo-postgres`, qui ne retourne rien) qui fait foi, pas
   le résultat de `nc`.
+
+### Docker Compose (2026-08-03)
+
+Remplacement des étapes manuelles (`docker network create`, `docker volume
+create`, deux `docker run` à rallonge) par un seul `docker-compose.yml` :
+services `api` (`build: .`) et `postgres` (`image: postgres:16-alpine`),
+volume nommé, healthcheck Postgres (`pg_isready`) couplé à
+`depends_on: condition: service_healthy` côté `api` pour éviter de démarrer
+avant que la base accepte des connexions. Volume existant `todo-postgres-data`
+réutilisé via `external: true` pour ne pas perdre les données déjà écrites.
+
+En creusant la config, deux problèmes trouvés et corrigés au passage :
+- `.env` était suivi par git (pas dans `.gitignore`) et déjà commité avec un
+  mot de passe en clair. Ajouté à `.gitignore`, retiré du suivi
+  (`git rm --cached`). Le mot de passe reste dans l'historique git tant
+  qu'aucun rewrite d'historique n'est fait — hors scope ici.
+- `docker-compose.yml` avait initialement `PGPASSWORD`/`POSTGRES_PASSWORD`
+  écrits en dur dans `environment:`. Déplacés dans `.env`, référencé via
+  `env_file:` sur les deux services. Le reste (host, port, user, nom de
+  base) reste en `environment:` : rien de sensible, autant que ce soit
+  visible directement dans le fichier commité.
+
+Port hôte de l'API : `3001` (et non `3000`) dans cet environnement, un
+conteneur préexistant sans rapport occupe déjà `3000` sur la machine.
+
+**Commandes du quotidien :** `docker compose up -d --build`, `docker compose
+ps`, `docker compose logs -f`, `docker compose down` (garde le volume).
