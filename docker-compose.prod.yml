@@ -1,0 +1,51 @@
+services:
+  api:
+    image: gabrielmartin13/todo-api:1.0.1
+    ports:
+      - "3001:3000"
+    environment:
+      - PORT=3000
+      - PGHOST=postgres
+      - PGPORT=5432
+      - PGUSER=todo
+      - PGDATABASE=todo
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  stats-api:
+    image: gabrielmartin13/stats-api:1.0.0
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=todo
+      - DB_USER=todo
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: todo
+      POSTGRES_USER: todo
+    env_file:
+      - .env
+    expose:
+      - "5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "todo", "-d", "todo"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres-data:
