@@ -1,41 +1,38 @@
-const { randomUUID } = require('crypto');
+const { pool } = require('../db');
 
-let tasks = [];
-
-function create(description) {
-  const task = {
-    id: randomUUID(),
-    description,
-    status: 'pending',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
-  tasks.push(task);
-  return task;
+async function create(description) {
+  const { rows } = await pool.query(
+    'INSERT INTO tasks (description) VALUES ($1) RETURNING *',
+    [description]
+  );
+  return rows[0];
 }
 
-function findAll() {
-  return tasks;
+async function findAll() {
+  const { rows } = await pool.query('SELECT * FROM tasks ORDER BY created_at');
+  return rows;
 }
 
-function findById(id) {
-  return tasks.find((t) => t.id === id);
+async function findById(id) {
+  const { rows } = await pool.query('SELECT * FROM tasks WHERE id = $1', [id]);
+  return rows[0];
 }
 
-function update(id, data) {
-  const task = findById(id);
+async function update(id, data) {
+  const task = await findById(id);
   if (!task) return null;
-  if (data.description !== undefined) task.description = data.description;
-  if (data.status !== undefined) task.status = data.status;
-  task.updatedAt = new Date();
-  return task;
+  const description = data.description !== undefined ? data.description : task.description;
+  const status = data.status !== undefined ? data.status : task.status;
+  const { rows } = await pool.query(
+    'UPDATE tasks SET description = $1, status = $2, updated_at = now() WHERE id = $3 RETURNING *',
+    [description, status, id]
+  );
+  return rows[0];
 }
 
-function remove(id) {
-  const index = tasks.findIndex((t) => t.id === id);
-  if (index === -1) return false;
-  tasks.splice(index, 1);
-  return true;
+async function remove(id) {
+  const { rowCount } = await pool.query('DELETE FROM tasks WHERE id = $1', [id]);
+  return rowCount > 0;
 }
 
 module.exports = { create, findAll, findById, update, remove };
