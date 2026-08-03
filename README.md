@@ -119,3 +119,29 @@ conteneur préexistant sans rapport occupe déjà `3000` sur la machine.
 
 **Commandes du quotidien :** `docker compose up -d --build`, `docker compose
 ps`, `docker compose logs -f`, `docker compose down` (garde le volume).
+
+### Second service : stats-api en Python (2026-08-03)
+
+Ajout de `stats-api`, un service FastAPI (fourni complet, rien à écrire côté
+Python) qui lit la même base Postgres que `api` et expose le nombre de
+tâches par statut. Deux adaptations nécessaires au code donné pour qu'il
+corresponde au schéma réel du chapitre 6 :
+- `KNOWN_STATUSES` changé de `["todo", "in_progress", "done"]` à
+  `["pending"]` : le modèle `tasks` actuel n'a pas de workflow de
+  transition d'état, `status` vaut toujours `'pending'` par défaut.
+- Noms de variables d'environnement (`DB_HOST`, `DB_PORT`, `DB_NAME`,
+  `DB_USER`, `DB_PASSWORD`) différents de ceux utilisés côté Node
+  (`PGHOST`, etc.) : mêmes valeurs, deux jeux de clés, câblés tous les
+  deux dans `docker-compose.yml`/`.env` plutôt que d'harmoniser les noms
+  entre les deux services.
+
+`stats-api` rejoint le même network Compose que `api` et `postgres` (network
+par défaut du fichier, pas besoin de le nommer explicitement), avec le même
+`depends_on: condition: service_healthy` sur Postgres. Port hôte : `8000`.
+
+**Vérifications :**
+- `curl http://localhost:8000/health` → `{"status":"ok"}`
+- `curl http://localhost:8000/stats` → `{"pending":3}` (3 tâches créées
+  pendant les tests précédents, toutes en `pending`)
+- `docker network inspect docker-project_default` liste bien les trois
+  conteneurs (`api`, `postgres`, `stats-api`) sur le même network.
