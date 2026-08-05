@@ -27,14 +27,15 @@ jobs:
   build:
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
+    # self-hosted, pas ubuntu-latest : la cible de déploiement est arm64 (ce
+    # Mac). Buildx sur ubuntu-latest émulait arm64 via QEMU pour produire
+    # l'image, et QEMU plante sur "npm ci" (illegal instruction, JIT V8 mal
+    # supporté en émulation) — build natif ici, pas d'émulation nécessaire.
+    runs-on: self-hosted
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -50,7 +51,7 @@ jobs:
         with:
           context: .
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/arm64
           tags: gabrielmartin09/todo-api:${{ github.sha }}
 
   deploy:
