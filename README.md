@@ -481,3 +481,62 @@ code applicatif.
   found: manifest unknown`, exit code `1`. Conteneur `todo-api`
   existant (`f1d8add…`, healthy) resté intact, prod jamais à moitié
   éteinte.
+
+### Phase 6 : tests d'intégration contre une vraie base, dans la pipeline (2026-08-05)
+
+Le déploiement est automatique depuis la phase 4 : plus rien ne
+s'interpose entre un commit sur `main` et la prod. Les tests existants
+(`src/tests/integration/api.test.js`) mockent entièrement `Task` — ils
+valident les routes, jamais le SQL réel. La régression `PGHOST` de la
+phase 5 serait passée à travers ces mocks sans problème ; les tests qui
+manquaient sont exactement ceux qui touchent Postgres pour de vrai.
+
+Nouveau fichier `src/tests/db-integration/tasks.db.test.js`, quatre
+comportements, contre une vraie base :
+- créer une tâche puis la relire par son id → exactement ce qui a été
+  envoyé (`description`, `status: 'pending'`).
+- lire un id qui n'existe pas (uuid valide, absent) → `404` propre, pas
+  une erreur 500 de type Postgres.
+- corps invalide (`description` manquante, ou 1001 caractères) → `400`,
+  et rien n'est écrit (`GET /api/tasks` reste vide).
+- supprimer une tâche → `204`, puis absente de la liste.
+
+Schéma créé par `src/db.js` lui-même (`CREATE TABLE IF NOT EXISTS` joué
+au chargement du module) — pas de script SQL séparé à maintenir, la
+même logique qui fait tourner l'app en dev crée le schéma en CI.
+`pool.query('TRUNCATE tasks')` en `beforeEach` : chaque test repart
+d'une base vide, un test ne peut pas polluer le suivant.
+
+Nouveau job `db-tests` dans `docker-build.yml`, `ubuntu-latest`, service
+`postgres:16-alpine` avec `options: --health-cmd pg_isready ...` — GitHub
+Actions attend que le healthcheck passe avant de lancer les steps du
+job, donc pas d'attente active à écrire à la main pour le classique
+"le job démarre avant que Postgres ait fini de s'initialiser". `build`
+dépend maintenant de `[test, db-tests]` : une régression détectée
+uniquement par les tests DB bloque le déploiement, comme une régression
+détectée par les tests unitaires.
+
+Deux scripts jest séparés (`npm test` ignore `db-integration/`, `npm
+run test:db` cible uniquement ce dossier avec `jest.db.config.js`) :
+`npm test` ne doit pas échouer en local faute de Postgres qui tourne.
+
+**Vérification que les tests servent à quelque chose :** branche `if
+(!task) return res.status(404)...` retirée à la main de
+`GET /api/tasks/:id`, `npm run test:db` relancé contre une base locale
+→ rouge (`Expected: 404, Received: 200`). Branche restaurée, suite de
+nouveau verte. Le test aurait attrapé une vraie régression, pas
+seulement un placebo qui passe toujours.
+
+**Ce qui casse si (vérifié) :**
+- pas de healthcheck sur le service Postgres → tests parfois rouges au
+  hasard selon que Postgres a fini de s'initialiser ; réglé par
+  `options: --health-cmd pg_isready` (Actions bloque le job jusqu'au
+  healthy).
+- pas de nettoyage entre tests → le second passage échouerait sur des
+  données du premier ; réglé par le `TRUNCATE` en `beforeEach`.
+- une assertion retirée → démontré ci-dessus avec la branche 404 retirée
+  puis restaurée : le test doit passer au rouge, sinon il ne sert à
+  rien.
+
+Pipeline complète confirmée verte de bout en bout avec les quatre jobs :
+`db-tests` → `test` (parallèles) → `build` → `deploy`.
