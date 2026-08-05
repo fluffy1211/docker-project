@@ -47,4 +47,4 @@ jobs:
         with:
           context: .
           push: true
-          tags: gabrielmartin13/todo-api:${{ github.sha }}
+          tags: gabrielmartin09/todo-api:${{ github.sha }}
