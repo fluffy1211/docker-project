@@ -48,3 +48,15 @@ jobs:
           context: .
           push: true
           tags: gabrielmartin09/todo-api:${{ github.sha }}
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: self-hosted # au lieu de ubuntu-latest : ce job tourne chez vous
+
+    steps:
+      - name: Where am I
+        run: hostname
+
+      - name: Show local containers
+        run: docker ps
