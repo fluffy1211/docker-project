@@ -1,3 +1,4 @@
 node_modules
 .env
 deploy_key
+actions-runner/
