@@ -1,8 +1,31 @@
 # docker-project
 
+Application todo conteneurisée (API Node, service de stats Python, Postgres) avec pipeline CI/CD complète : build, tests, déploiement automatique et supervision Prometheus/Grafana.
+
 ## Journal de bord
 
-### Dockerfile de production (2026-08-03)
+Table des matières :
+
+- [Phase 1 : Dockerfile de production](#phase-1--dockerfile-de-production-2026-08-03)
+- [Phase 2 : Persistance PostgreSQL](#phase-2--persistance-postgresql-2026-08-03)
+- [Phase 3 : Network custom](#phase-3--network-custom-2026-08-03)
+- [Phase 4 : Docker Compose](#phase-4--docker-compose-2026-08-03)
+- [Phase 5 : Second service : stats-api en Python](#phase-5--second-service--stats-api-en-python-2026-08-03)
+- [Phase 6 : Registry et déploiement depuis les images publiées](#phase-6--registry-et-déploiement-depuis-les-images-publiées-2026-08-03)
+- [Phase 7 : CI, build et push automatique de todo-api](#phase-7--ci-build-et-push-automatique-de-todo-api-2026-08-05)
+- [Phase 8 : Maquette de machine de production, en local](#phase-8--maquette-de-machine-de-production-en-local-2026-08-05)
+- [Phase 9 : Runner self-hosted, à côté de la machine cible](#phase-9--runner-self-hosted-à-côté-de-la-machine-cible-2026-08-05)
+- [Phase 10 : Job de déploiement, ssh-agent, scp, docker compose à distance](#phase-10--job-de-déploiement-ssh-agent-scp-docker-compose-à-distance-2026-08-05)
+- [Phase 11 : rejouer, et revenir en arrière](#phase-11--rejouer-et-revenir-en-arrière-2026-08-05)
+- [Phase 12 : tests d'intégration contre une vraie base, dans la pipeline](#phase-12--tests-dintégration-contre-une-vraie-base-dans-la-pipeline-2026-08-05)
+- [Phase 13 : rendre l'API mesurable, avec prom-client](#phase-13--rendre-lapi-mesurable-avec-prom-client-2026-08-05)
+- [Phase 14 : ménage, node_modules sorti du suivi git](#phase-14--ménage-node_modules-sorti-du-suivi-git-2026-08-05)
+- [Phase 15 : Prometheus et Grafana sur la machine cible](#phase-15--prometheus-et-grafana-sur-la-machine-cible-2026-08-05)
+- [Phase 16 : procédure de déploiement](#phase-16--procédure-de-déploiement-2026-08-05)
+
+---
+
+### Phase 1 : Dockerfile de production (2026-08-03)
 
 Passage du Dockerfile de dev à un Dockerfile de prod, multi-stage.
 
@@ -18,7 +41,9 @@ Passage du Dockerfile de dev à un Dockerfile de prod, multi-stage.
 - Build à froid (`--no-cache`) : `1.167s` total.
 - Build à chaud (cache plein) : `0.468s` total, 5 layers `CACHED`.
 
-### Persistance PostgreSQL (2026-08-03)
+---
+
+### Phase 2 : Persistance PostgreSQL (2026-08-03)
 
 Les tâches vivaient en mémoire (perdues à chaque redémarrage du conteneur API).
 Ajout d'un conteneur Postgres à part, lancé à la main avec `docker run`, volume
@@ -26,7 +51,7 @@ nommé pour les données. Pas de network custom : le conteneur atterrit sur le
 bridge par défaut, donc l'API le joint par IP interne, pas par nom.
 
 **Commande utilisée :**
-```
+```bash
 docker run -d --name todo-postgres \
   -e POSTGRES_DB=todo \
   -e POSTGRES_USER=todo \
@@ -50,7 +75,9 @@ d'env, volume) rien que pour Postgres, plus la manip pour retrouver l'IP à
 chaque recréation : ça fait beaucoup d'étapes manuelles et fragiles comparé à
 ce qu'on imagine possible avec un seul fichier déclaratif.
 
-### Network custom (2026-08-03)
+---
+
+### Phase 3 : Network custom (2026-08-03)
 
 L'IP interne trouvée à l'étape précédente est fragile (change si le conteneur
 est recréé) et rien n'empêchait de publier le port Postgres vers l'hôte par
@@ -58,7 +85,7 @@ erreur. Correction : un network Docker créé explicitement, API et base dessus,
 connexion par nom de conteneur.
 
 **Commande utilisée :**
-```
+```bash
 docker network create todo-network
 ```
 
@@ -66,7 +93,7 @@ Nom retenu : `todo-network`.
 
 Postgres relancé sur ce network, toujours sans `-p` (le port 5432 n'a jamais
 été publié vers l'hôte, y compris avant cette étape) :
-```
+```bash
 docker run -d --name todo-postgres \
   --network todo-network \
   -e POSTGRES_DB=todo \
@@ -93,7 +120,9 @@ conteneur, résolu via le DNS interne du network custom).
   avec `docker port todo-postgres`, qui ne retourne rien) qui fait foi, pas
   le résultat de `nc`.
 
-### Docker Compose (2026-08-03)
+---
+
+### Phase 4 : Docker Compose (2026-08-03)
 
 Remplacement des étapes manuelles (`docker network create`, `docker volume
 create`, deux `docker run` à rallonge) par un seul `docker-compose.yml` :
@@ -120,7 +149,9 @@ conteneur préexistant sans rapport occupe déjà `3000` sur la machine.
 **Commandes du quotidien :** `docker compose up -d --build`, `docker compose
 ps`, `docker compose logs -f`, `docker compose down` (garde le volume).
 
-### Second service : stats-api en Python (2026-08-03)
+---
+
+### Phase 5 : Second service : stats-api en Python (2026-08-03)
 
 Ajout de `stats-api`, un service FastAPI (fourni complet, rien à écrire côté
 Python) qui lit la même base Postgres que `api` et expose le nombre de
@@ -146,12 +177,14 @@ par défaut du fichier, pas besoin de le nommer explicitement), avec le même
 - `docker network inspect docker-project_default` liste bien les trois
   conteneurs (`api`, `postgres`, `stats-api`) sur le même network.
 
-### Registry et déploiement depuis les images publiées (2026-08-03)
+---
+
+### Phase 6 : Registry et déploiement depuis les images publiées (2026-08-03)
 
 `todo-api` et `stats-api` poussés sur Docker Hub (`gabrielmartin13/todo-api`,
 `gabrielmartin13/stats-api`), tag `1.0.0` explicite plutôt que `latest`.
 
-```
+```bash
 docker login -u gabrielmartin13
 docker tag docker-project-api:latest gabrielmartin13/todo-api:1.0.0
 docker tag docker-project-stats-api:latest gabrielmartin13/stats-api:1.0.0
@@ -235,7 +268,9 @@ sur un événement non géré. Image republiée en `gabrielmartin13/todo-api:1.0
 le conteneur reste `Up`, `/api/tasks` répond `500 Internal server error`
 proprement au lieu de devenir injoignable.
 
-### CI : build et push automatique de todo-api (2026-08-05)
+---
+
+### Phase 7 : CI, build et push automatique de todo-api (2026-08-05)
 
 Ajout de `.github/workflows/docker-build.yml`, deux jobs :
 - `test` : `npm ci` + `npm test`, déclenché sur push, toutes branches.
@@ -275,7 +310,9 @@ Docker Hub) plutôt que de le laisser traîner.
   pipeline n'est pas affecté. Secret restauré immédiatement après (nouveau
   token, l'ancien avait déjà été collé en clair).
 
-### Maquette de machine de production, en local (2026-08-05)
+---
+
+### Phase 8 : Maquette de machine de production, en local (2026-08-05)
 
 Avant de parler de vrai déploiement, une cible pour la pipeline : pas un
 vrai hébergeur, un conteneur `docker:28-dind` (Docker-in-Docker) avec son
@@ -289,7 +326,7 @@ et réciproquement.
 `git add` de la phase. Une clé privée commitée par erreur ne se rattrape
 pas avec un commit de suppression — l'historique la garde.
 
-```
+```bash
 ssh-keygen -t ed25519 -N "" -f deploy_key
 docker build -f Dockerfile.vm -t vm-prod .
 docker run -d --privileged --name vm-prod \
@@ -322,7 +359,9 @@ droits restreints.
   `docker images` → `hello-world` toujours présent, pas retéléchargé.
   `vm-prod-data` survit au redémarrage du conteneur.
 
-### Runner self-hosted, à côté de la machine cible (2026-08-05)
+---
+
+### Phase 9 : Runner self-hosted, à côté de la machine cible (2026-08-05)
 
 Le runner hébergé par GitHub ne peut pas joindre `vm-prod` : pas d'adresse
 publique, machine derrière la box. Solution : enregistrer ce poste comme
@@ -354,7 +393,9 @@ donc uniquement du code qu'on a fusionné soi-même, jamais une PR externe.
   erreur, comportement normal du côté GitHub, pas une panne à
   diagnostiquer.
 
-### Job de déploiement : ssh-agent, scp, docker compose à distance (2026-08-05)
+---
+
+### Phase 10 : Job de déploiement, ssh-agent, scp, docker compose à distance (2026-08-05)
 
 Cible : `/srv/todo` sur `vm-prod`, deux fichiers. `compose.yml`
 ([deploy/compose.yml](deploy/compose.yml)) versionné dans le dépôt,
@@ -403,7 +444,9 @@ si tout tournait sur `ubuntu-latest`.
   clé privée, même dans les logs de nettoyage de l'agent SSH. Secret
   restauré immédiatement après.
 
-### Palier 2, phase 5 : rejouer, et revenir en arrière (2026-08-05)
+---
+
+### Phase 11 : rejouer, et revenir en arrière (2026-08-05)
 
 **Redéploiement identique :** premier essai faussé par deux push
 enchaînés en quelques secondes (correctif README + commit vide) — le
@@ -456,12 +499,12 @@ process.
 - `T_rétabli` (`/health` répond `ok`, `POST /api/tasks` fonctionne) :
   `13:46:36`.
 - **Temps total constat → rétablissement : 64 secondes**, faux départ
-  inclus. Leçon retenue pour la procédure de la phase 9 : un retour
+  inclus. Leçon retenue pour la procédure de la phase 16 : un retour
   arrière n'est fiable que si le `compose.yml` fait partie de ce qu'on
   restaure, pas seulement le tag d'image.
 
-**Commande de retour arrière** (celle qui compte pour la phase 9) :
-```
+**Commande de retour arrière** (celle qui compte pour la phase 16) :
+```bash
 cd /srv/todo && TAG=<sha précédent> docker compose up -d
 ```
 À utiliser accompagnée de la restauration du `compose.yml` correspondant
@@ -482,13 +525,15 @@ code applicatif.
   existant (`f1d8add…`, healthy) resté intact, prod jamais à moitié
   éteinte.
 
-### Phase 6 : tests d'intégration contre une vraie base, dans la pipeline (2026-08-05)
+---
 
-Le déploiement est automatique depuis la phase 4 : plus rien ne
+### Phase 12 : tests d'intégration contre une vraie base, dans la pipeline (2026-08-05)
+
+Le déploiement est automatique depuis la phase 10 : plus rien ne
 s'interpose entre un commit sur `main` et la prod. Les tests existants
 (`src/tests/integration/api.test.js`) mockent entièrement `Task` — ils
 valident les routes, jamais le SQL réel. La régression `PGHOST` de la
-phase 5 serait passée à travers ces mocks sans problème ; les tests qui
+phase 11 serait passée à travers ces mocks sans problème ; les tests qui
 manquaient sont exactement ceux qui touchent Postgres pour de vrai.
 
 Nouveau fichier `src/tests/db-integration/tasks.db.test.js`, quatre
@@ -541,7 +586,9 @@ seulement un placebo qui passe toujours.
 Pipeline complète confirmée verte de bout en bout avec les quatre jobs :
 `db-tests` → `test` (parallèles) → `build` → `deploy`.
 
-### Phase 7 : rendre l'API mesurable, avec prom-client (2026-08-05)
+---
+
+### Phase 13 : rendre l'API mesurable, avec prom-client (2026-08-05)
 
 Instrumentation isolée dans `src/metrics.js` — un seul commit, rien
 d'autre dedans, pour rester relisible dans trois semaines. `/metrics`
@@ -569,7 +616,7 @@ avant de commit :
 
 **Le test qui compte** : trois `GET /api/tasks` d'affilée, `/metrics`
 avant et après →
-```
+```text
 http_requests_total{method="GET",route="/api/tasks",status="200"} 3
 ```
 Exactement `3`, pas `1` (compteur mal placé) ni repartant de `0`
@@ -582,7 +629,9 @@ Exactement `3`, pas `1` (compteur mal placé) ni repartant de `0`
   → `Content-Type: text/plain; version=0.0.4; charset=utf-8`.
 - Route inconnue comptée sous `route="unmatched"`, pas invisible.
 
-### Ménage : node_modules sorti du suivi git (2026-08-05)
+---
+
+### Phase 14 : ménage, node_modules sorti du suivi git (2026-08-05)
 
 `node_modules` était dans `.gitignore` depuis le début, mais 595
 fichiers avaient été commités avant l'ajout de la règle — restés
@@ -590,7 +639,9 @@ suivis malgré tout. `git rm -r --cached node_modules` : retirés du
 suivi, laissés sur disque, aucun impact sur `npm ci` en CI (reconstruit
 depuis `package-lock.json` à chaque run).
 
-### Phase 8 : Prometheus et Grafana sur la machine cible (2026-08-05)
+---
+
+### Phase 15 : Prometheus et Grafana sur la machine cible (2026-08-05)
 
 Surveillance intégrée à la stack de prod, dans `deploy/compose.yml`,
 même réseau que `todo-api`/`todo-db` — Prometheus joint l'API par
@@ -610,7 +661,7 @@ golden signal : `up` (disponibilité), `sum(rate(http_requests_total[1m]))`
 l'histogramme de durée (latence p95).
 
 **Piège de port propre à cette maquette :** `vm-prod` (le conteneur qui
-joue la machine cible depuis la phase 3) avait déjà réservé le port
+joue la machine cible depuis la phase 8) avait déjà réservé le port
 hôte `3001` pour le dev local, donc son port `3001` interne est
 remappé sur `3002` côté Mac réel (`docker run ... -p 3002:3001`).
 Grafana, dans ce compose, écoute bien sur `3001` *à l'intérieur* de
@@ -638,11 +689,13 @@ la "machine cible" est elle-même un conteneur sur cette machine.
 |---|---|---|---|---|
 | Au repos, avant la boucle de charge | `1` | `0.24` (résiduel, health checks) | `0%` (pas de données 5xx) | `16ms` |
 | Pendant la boucle de charge (2 min, `GET /api/tasks` + `POST` + `GET /api/tasks/inexistant`) | `1` | `11.2` | `32.6%` (le tiers de requêtes vise `/inexistant`, id non-UUID → `500`, pas `404`) | `22ms` |
-| Pendant l'incident de la phase 10 | — | — | — | — |
+| Pendant l'incident de la phase 17 | — | — | — | — |
 
-Troisième ligne à remplir en phase 10.
+Troisième ligne à remplir en phase 17.
 
-### Phase 9 : procédure de déploiement (2026-08-05)
+---
+
+### Phase 16 : procédure de déploiement (2026-08-05)
 
 Écrite dans [`docs/PROCEDURE_DEPLOIEMENT.md`](docs/PROCEDURE_DEPLOIEMENT.md) :
 prérequis, déploiement automatique (ce que fait la pipeline) et manuel
