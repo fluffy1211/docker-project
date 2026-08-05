@@ -55,8 +55,36 @@ jobs:
     runs-on: self-hosted # au lieu de ubuntu-latest : ce job tourne chez vous
 
     steps:
-      - name: Where am I
-        run: hostname
+      - uses: actions/checkout@v4
 
-      - name: Show local containers
-        run: docker ps
+      - name: Load deploy key into ssh-agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Trust target host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ secrets.DEPLOY_PORT }}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Send compose.yml to target
+        run: |
+          scp -P "${{ secrets.DEPLOY_PORT }}" deploy/compose.yml \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/todo/compose.yml"
+
+      - name: Deploy on target
+        run: |
+          ssh -p "${{ secrets.DEPLOY_PORT }}" "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            "cd /srv/todo && TAG=${{ github.sha }} docker compose up -d"
+
+      - name: Verify /health responds
+        run: |
+          for i in $(seq 1 10); do
+            if curl -sf "http://${{ secrets.DEPLOY_HOST }}:3000/health"; then
+              echo "API is healthy"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Health check failed"
+          exit 1
