@@ -581,3 +581,11 @@ Exactement `3`, pas `1` (compteur mal placé) ni repartant de `0`
 - `/metrics` en prod (`curl -s -D - -o /dev/null localhost:3000/metrics`)
   → `Content-Type: text/plain; version=0.0.4; charset=utf-8`.
 - Route inconnue comptée sous `route="unmatched"`, pas invisible.
+
+### Ménage : node_modules sorti du suivi git (2026-08-05)
+
+`node_modules` était dans `.gitignore` depuis le début, mais 595
+fichiers avaient été commités avant l'ajout de la règle — restés
+suivis malgré tout. `git rm -r --cached node_modules` : retirés du
+suivi, laissés sur disque, aucun impact sur `npm ci` en CI (reconstruit
+depuis `package-lock.json` à chaque run).
