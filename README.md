@@ -540,3 +540,44 @@ seulement un placebo qui passe toujours.
 
 Pipeline complète confirmée verte de bout en bout avec les quatre jobs :
 `db-tests` → `test` (parallèles) → `build` → `deploy`.
+
+### Phase 7 : rendre l'API mesurable, avec prom-client (2026-08-05)
+
+Instrumentation isolée dans `src/metrics.js` — un seul commit, rien
+d'autre dedans, pour rester relisible dans trois semaines. `/metrics`
+répond en texte brut (`Content-Type: text/plain; version=0.0.4`),
+jamais en JSON.
+
+Trois métriques génériques :
+- `http_requests_total{method,route,status}` — compteur.
+- `http_request_duration_seconds{method,route,status}` — histogramme
+  (buckets par défaut de `prom-client`, suffisant pour un p95).
+- `tasks_created_total` — la seule métrique propre au métier, celle que
+  personne d'autre ne devine : compteur incrémenté sur chaque
+  `POST /api/tasks` réussi, dans `routes/tasks.js`.
+
+Le label `route` vient de `req.route.path` (+ `req.baseUrl`), jamais de
+l'URL brute — capturé dans `res.on('finish')`, donc après que Express a
+fini de router la requête. Deux pièges du brief, vérifiés en local
+avant de commit :
+- **route inconnue → toujours comptée** : `req.route` n'existe pas sur
+  une 404 non matchée ; label de repli `"unmatched"`, borné, plutôt que
+  de laisser ces erreurs disparaître des métriques.
+- **id jamais en label** : `GET /api/tasks/:id` produit le label
+  `/api/tasks/:id`, jamais `/api/tasks/<uuid réel>` — confirmé en
+  créant une tâche et en relisant `/metrics` après coup.
+
+**Le test qui compte** : trois `GET /api/tasks` d'affilée, `/metrics`
+avant et après →
+```
+http_requests_total{method="GET",route="/api/tasks",status="200"} 3
+```
+Exactement `3`, pas `1` (compteur mal placé) ni repartant de `0`
+(app redémarrée entre-temps).
+
+**Vérifications :**
+- Pipeline entière (`db-tests`, `test`, `build`, `deploy`) verte, aucun
+  test cassé par l'instrumentation.
+- `/metrics` en prod (`curl -s -D - -o /dev/null localhost:3000/metrics`)
+  → `Content-Type: text/plain; version=0.0.4; charset=utf-8`.
+- Route inconnue comptée sous `route="unmatched"`, pas invisible.
