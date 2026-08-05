@@ -24,8 +24,50 @@ jobs:
       - name: Run Jest tests
         run: npm test
 
+  db-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: todo
+          POSTGRES_PASSWORD: todo_pw
+          POSTGRES_DB: todo
+        ports:
+          - 5432:5432
+        # Actions attend que ce healthcheck passe avant de lancer les steps
+        # du job : pas besoin d'attente active à la main pour laisser
+        # Postgres finir son initialisation.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run DB integration tests
+        run: npm run test:db
+        env:
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: todo
+          PGPASSWORD: todo_pw
+          PGDATABASE: todo
+
   build:
-    needs: test
+    needs: [test, db-tests]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     # self-hosted, pas ubuntu-latest : la cible de déploiement est arm64 (ce
     # Mac). Buildx sur ubuntu-latest émulait arm64 via QEMU pour produire

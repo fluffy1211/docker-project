@@ -16,6 +16,7 @@
   "main": "index.js",
   "scripts": {
     "test": "jest",
+    "test:db": "jest --config jest.db.config.js --runInBand",
     "start": "node src/app.js"
   },
   "dependencies": {
@@ -31,7 +32,11 @@
   "jest": {
     "testPathIgnorePatterns": [
       "/node_modules/",
-      "/actions-runner/"
+      "/actions-runner/",
+      "/db-integration/"
+    ],
+    "modulePathIgnorePatterns": [
+      "<rootDir>/actions-runner/"
     ]
   }
 }
