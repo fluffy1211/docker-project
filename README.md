@@ -274,3 +274,50 @@ Docker Hub) plutôt que de le laisser traîner.
   Docker Hub" (`Error: Username and password required`). Le reste de la
   pipeline n'est pas affecté. Secret restauré immédiatement après (nouveau
   token, l'ancien avait déjà été collé en clair).
+
+### Maquette de machine de production, en local (2026-08-05)
+
+Avant de parler de vrai déploiement, une cible pour la pipeline : pas un
+vrai hébergeur, un conteneur `docker:28-dind` (Docker-in-Docker) avec son
+propre `sshd`. Vu de la pipeline, indiscernable d'une vraie machine —
+adresse, port, clé, utilisateur, Docker à l'autre bout. Ce qui compte,
+c'est l'isolation : son Docker ne voit pas les conteneurs du poste de dev,
+et réciproquement.
+
+**Ordre imposé, sécurité d'abord :** ligne `deploy_key` ajoutée au
+`.gitignore` *avant* la génération de la paire de clés, donc avant tout
+`git add` de la phase. Une clé privée commitée par erreur ne se rattrape
+pas avec un commit de suppression — l'historique la garde.
+
+```
+ssh-keygen -t ed25519 -N "" -f deploy_key
+docker build -f Dockerfile.vm -t vm-prod .
+docker run -d --privileged --name vm-prod \
+  -p 2222:22 -p 3000:3000 -p 9090:9090 -p 3002:3001 \
+  -v vm-prod-data:/var/lib/docker \
+  vm-prod
+```
+
+Port `3001` remappé en `3002` côté hôte : `3001` déjà pris par
+`docker-project-api-1` (stack de dev locale), conflit sans rapport avec
+l'isolation elle-même — juste deux process qui veulent le même port sur
+la même machine physique.
+
+`Dockerfile.vm` : `sshd` doit démarrer avant `dockerd`, sinon il ne
+démarre jamais une fois le daemon Docker au premier plan — d'où le script
+`/start.sh` qui lance `sshd` puis `exec dockerd-entrypoint.sh`.
+`authorized_keys` ne reçoit que `deploy_key.pub` (la publique), jamais la
+privée. Connexion en root assumée : maquette jetable, injoignable de
+l'extérieur ; sur une vraie machine ce serait un compte de service à
+droits restreints.
+
+**Vérifications :**
+- **Isolation + fonctionnement** : `ssh -i deploy_key -p 2222 root@localhost
+  docker ps -a` → liste vide, aucun conteneur du poste de dev visible.
+  `docker run --rm hello-world` dedans → réussit, image pull + run normal.
+- **Sans la clé, personne n'entre** : même commande sans `-i deploy_key` →
+  `Permission denied (publickey,password,keyboard-interactive)`, échec
+  immédiat.
+- **Persistance via volume** : `docker restart vm-prod`, reconnexion,
+  `docker images` → `hello-world` toujours présent, pas retéléchargé.
+  `vm-prod-data` survit au redémarrage du conteneur.
