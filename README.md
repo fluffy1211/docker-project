@@ -402,3 +402,82 @@ si tout tournait sur `ubuntu-latest`.
   ligne par ligne : secrets masqués (`***`) partout, aucune trace de
   clé privée, même dans les logs de nettoyage de l'agent SSH. Secret
   restauré immédiatement après.
+
+### Palier 2, phase 5 : rejouer, et revenir en arrière (2026-08-05)
+
+**Redéploiement identique :** premier essai faussé par deux push
+enchaînés en quelques secondes (correctif README + commit vide) — le
+runner self-hosted étant unique, les deux jobs `deploy` se sont mis en
+file et exécutés dans un ordre différent de celui des push, la prod a
+fini sur l'image du premier push arrivé en second en file. Pas un bug
+de la pipeline, juste une leçon : ne pas empiler des push sans attendre
+que le précédent ait fini de déployer. Repris proprement, un seul push
+à la fois : pipeline complète en **119s**, `docker ps -a` avant/après
+identique (2 conteneurs, aucun orphelin), `/health` répond. Un
+conteneur transitoire nommé `<hash>_todo-api` a été aperçu une fois en
+plein remplacement (`docker compose up -d` renomme l'ancien conteneur
+le temps de démarrer le nouveau) — disparu de lui-même une seconde
+après, pas un vrai orphelin, juste la fenêtre de bascule normale.
+
+**Bug rencontré pendant le build multi-arch :** en tentant de garder
+`build` sur `ubuntu-latest` avec émulation QEMU pour produire une image
+`arm64` (nécessaire pour `vm-prod`, ce Mac), `npm ci` plantait sous
+QEMU (`Illegal instruction`, JIT V8 mal émulé). Correctif : `build`
+déplacé sur `runs-on: self-hosted` (natif, arm64, pas d'émulation),
+`platforms` réduit à `linux/arm64` puisque le seul consommateur de
+l'image est cette machine. Bénéfice inattendu : build 26s au lieu de
+~70s avec QEMU.
+
+**Régression volontaire :** `PGHOST` de `todo-api` changé de `todo-db`
+(bon nom de service) vers `postgres` (n'existe pas dans ce
+`compose.yml`) dans `deploy/compose.yml`. `/health` ne touchant pas la
+base, l'intention était de laisser la pipeline verte malgré une
+régression réelle. Résultat plus grave que prévu : la requête de
+création du schéma dans `src/db.js` (jouée au chargement du module,
+jamais rattrapée) rejetait sur `ENOTFOUND postgres`, ce qui plantait
+tout le process Node — pas juste les routes DB. `todo-api` est resté en
+boucle de redémarrage, et **le job `deploy` a lui-même détecté la
+panne** via le contrôle `/health` (10 tentatives, toutes en échec) :
+pipeline rouge, pas de faux vert. Corrigé sur les deux fronts :
+`PGHOST` remis à `todo-db`, et `src/db.js` attrape maintenant le rejet
+de la requête de démarrage (`.catch(...)`, même esprit que le handler
+`pool.on('error')` du chapitre Postgres) au lieu de planter tout le
+process.
+
+**Retour arrière, chronométré :**
+- `T_constat` (panne observée, boucle de redémarrage) : `13:45:32`.
+- Premier réflexe — revenir au tag précédent connu bon
+  (`TAG=f1d8add… docker compose up -d`) — **insuffisant** : le
+  `compose.yml` sur la machine cible avait déjà été écrasé par la
+  pipeline avec la version cassée avant l'échec du `deploy`. Changer le
+  tag ne change pas le fichier compose lui-même.
+- Correctif réel : renvoi du `compose.yml` d'avant régression par
+  `scp`, puis rejouer `TAG=f1d8add… docker compose up -d`.
+- `T_rétabli` (`/health` répond `ok`, `POST /api/tasks` fonctionne) :
+  `13:46:36`.
+- **Temps total constat → rétablissement : 64 secondes**, faux départ
+  inclus. Leçon retenue pour la procédure de la phase 9 : un retour
+  arrière n'est fiable que si le `compose.yml` fait partie de ce qu'on
+  restaure, pas seulement le tag d'image.
+
+**Commande de retour arrière** (celle qui compte pour la phase 9) :
+```
+cd /srv/todo && TAG=<sha précédent> docker compose up -d
+```
+À utiliser accompagnée de la restauration du `compose.yml` correspondant
+si la régression touche le fichier compose lui-même, pas seulement le
+code applicatif.
+
+**Vérifications :**
+- **Deux déploiements identiques d'affilée** : même état final (2
+  conteneurs, aucun orphelin persistant, aucune erreur de port déjà
+  utilisé), confirmé sur le second essai propre (119s, push unique).
+- **Le retour arrière rétabli le service** : confirmé, `/health` et
+  `POST /api/tasks` répondent après le second geste (restauration du
+  compose + tag), 64s du constat au rétablissement.
+- **Retour arrière vers un tag inexistant échoue franchement** :
+  `TAG=doesnotexist000 docker compose up -d` → `Error response from
+  daemon: manifest for gabrielmartin09/todo-api:doesnotexist000 not
+  found: manifest unknown`, exit code `1`. Conteneur `todo-api`
+  existant (`f1d8add…`, healthy) resté intact, prod jamais à moitié
+  éteinte.
