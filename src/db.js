@@ -12,7 +12,9 @@ pool.on('error', (err) => {
   console.error('Unexpected postgres pool error', err);
 });
 
-const ready = pool.query(`
+const ready = pool
+  .query(
+    `
   CREATE TABLE IF NOT EXISTS tasks (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     description text NOT NULL,
@@ -20,6 +22,10 @@ const ready = pool.query(`
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
   )
-`);
+`
+  )
+  .catch((err) => {
+    console.error('Failed to ensure tasks table exists', err);
+  });
 
 module.exports = { pool, ready };

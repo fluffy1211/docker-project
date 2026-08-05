@@ -4,7 +4,7 @@ services:
     image: gabrielmartin09/todo-api:${TAG} # ${TAG} vient de l'environnement, pas du fichier
     environment:
       - PORT=3000
-      - PGHOST=postgres
+      - PGHOST=todo-db
       - PGPORT=5432
       - PGUSER=todo
       - PGDATABASE=todo
