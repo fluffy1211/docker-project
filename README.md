@@ -641,3 +641,32 @@ la "machine cible" est elle-même un conteneur sur cette machine.
 | Pendant l'incident de la phase 10 | — | — | — | — |
 
 Troisième ligne à remplir en phase 10.
+
+### Phase 9 : procédure de déploiement (2026-08-05)
+
+Écrite dans [`docs/PROCEDURE_DEPLOIEMENT.md`](docs/PROCEDURE_DEPLOIEMENT.md) :
+prérequis, déploiement automatique (ce que fait la pipeline) et manuel
+(si elle est en panne) avec un point de vérification observable après
+chaque étape, retour arrière (commande, critère de déclenchement, qui
+décide), tableau des pannes connues avec leur signature dans le
+dashboard, durée normale (~2 minutes).
+
+**Mise à l'épreuve avant commit :**
+- **Relecture "inconnu"** : deux trous trouvés et corrigés — l'étape de
+  build manuel ne disait pas de faire `docker login` d'abord ; le
+  retour arrière renvoyait vers "l'ancien `compose.yml`" sans dire
+  comment l'obtenir concrètement (ajouté :
+  `git show <sha>:deploy/compose.yml > /tmp/...`, puis `scp`).
+- **Cas non prévu (port occupé)** : rejoué en vrai plutôt qu'imaginé —
+  `todo-api` stoppé, port `3000` pris par un conteneur `nginx`
+  quelconque, puis `docker compose up -d` rejoué. Résultat réel :
+  `todo-api` passe en `Exited (137)`, panne réelle (contrairement aux
+  autres pannes du tableau, celle-ci touche la prod même hors
+  déploiement). Signature exacte capturée (`Bind for 0.0.0.0:3000
+  failed: port is already allocated`) et correctif ajouté au tableau
+  des pannes connues plutôt que de laisser le lecteur sans issue.
+- **Erreur glissée volontairement** : destination `scp` fautive
+  (`/srv/tod/` au lieu de `/srv/todo/`) — échoue bruyamment tout de
+  suite (`scp: realpath /srv/tod/: No such file`), avant même
+  d'atteindre le point de vérification de l'étape suivante. Rien ne
+  passe en silence.
