@@ -234,3 +234,43 @@ sur un événement non géré. Image republiée en `gabrielmartin13/todo-api:1.0
 (nouveau tag, pas d'écrasement silencieux du `1.0.0` déjà poussé). Retest :
 le conteneur reste `Up`, `/api/tasks` répond `500 Internal server error`
 proprement au lieu de devenir injoignable.
+
+### CI : build et push automatique de todo-api (2026-08-05)
+
+Ajout de `.github/workflows/docker-build.yml`, deux jobs :
+- `test` : `npm ci` + `npm test`, déclenché sur push, toutes branches.
+- `build` : `needs: test`, condition `github.ref == 'refs/heads/main' &&
+  github.event_name == 'push'` — ne tourne que sur push direct vers `main`.
+  Login Docker Hub (`docker/login-action`) via secrets `DOCKERHUB_USERNAME`
+  / `DOCKERHUB_TOKEN`, puis `docker/build-push-action` pousse
+  `<user>/todo-api:${{ github.sha }}` — un tag par commit, jamais de
+  `latest`, jamais deux fois le même tag.
+
+Le `test.yml` existant (push/PR sur `main` uniquement) ne couvrait pas le
+cas "push sur une branche de travail" ; `docker-build.yml` le fait en
+autonome, sans dépendre de l'autre workflow.
+
+**Incident en cours de route :** les secrets Docker Hub avaient été créés
+depuis un compte lié à l'email professionnel — repéré avant d'entrer le
+token dans GitHub. Compte personnel (`gabrielmartin09`) créé à la place,
+anciens repos (`todo-api`, `stats-api`, `reactapps`) supprimés du compte
+pro. Les images de ce projet vivent maintenant sous
+`gabrielmartin09/todo-api`, plus sous `gabrielmartin13/...`. Token collé
+en clair dans la conversation à deux reprises → rotation immédiate à
+chaque fois (`gh secret set` avec le nouveau token, ancien révoqué côté
+Docker Hub) plutôt que de le laisser traîner.
+
+**Vérifications :**
+- **Deux tags jamais identiques** : deux push successifs sur `main`
+  (`5909f69`, `ee4d82f`) → deux images poussées, tags `5909f69…` et
+  `ee4d82f…`, aucun écrasement (le tag est le sha, donc mécaniquement
+  unique par commit).
+- **Branche de travail = tests seuls** : push sur `ci-verify/tag-check` →
+  job `test` réussi, job `build` `skipped` (condition sur `refs/heads/main`
+  non remplie). Rien poussé sur Docker Hub.
+- **Panne localisée si secret absent** : `DOCKERHUB_TOKEN` supprimé
+  temporairement des secrets du repo, push sur `main` (`f333f81`) → job
+  `test` reste vert, job `build` échoue précisément à l'étape "Log in to
+  Docker Hub" (`Error: Username and password required`). Le reste de la
+  pipeline n'est pas affecté. Secret restauré immédiatement après (nouveau
+  token, l'ancien avait déjà été collé en clair).
