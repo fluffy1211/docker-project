@@ -1,0 +1,16 @@
+# Dockerfile.vm : la machine de production, en maquette
+FROM docker:28-dind
+
+# openssh-server : le programme qui écoute les connexions SSH entrantes
+RUN apk add --no-cache openssh-server && ssh-keygen -A
+RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh
+
+# La clé PUBLIQUE du déploiement, la seule qui aura le droit d'entrer
+COPY deploy_key.pub /root/.ssh/authorized_keys
+RUN chmod 600 /root/.ssh/authorized_keys
+
+# sshd doit démarrer AVANT le daemon Docker, sinon il ne démarre jamais
+RUN printf '#!/bin/sh\n/usr/sbin/sshd\nexec dockerd-entrypoint.sh "$@"\n' > /start.sh \
+  && chmod +x /start.sh
+
+ENTRYPOINT ["/start.sh"]
