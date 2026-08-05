@@ -321,3 +321,84 @@ droits restreints.
 - **Persistance via volume** : `docker restart vm-prod`, reconnexion,
   `docker images` → `hello-world` toujours présent, pas retéléchargé.
   `vm-prod-data` survit au redémarrage du conteneur.
+
+### Runner self-hosted, à côté de la machine cible (2026-08-05)
+
+Le runner hébergé par GitHub ne peut pas joindre `vm-prod` : pas d'adresse
+publique, machine derrière la box. Solution : enregistrer ce poste comme
+exécutrice de pipeline (`Settings > Actions > Runners > New self-hosted
+runner`), agent lancé en tâche de fond (`./run.sh` en `nohup`, détaché du
+terminal) — doit rester actif, sinon les jobs qui en dépendent restent
+`Queued` indéfiniment, sans erreur.
+
+Une seule ligne change dans le workflow, mais elle porte une vraie
+décision d'architecture : chaque job choisit son runner. `test` et
+`build` restent sur `ubuntu-latest` (gratuits, rien à joindre en local).
+Seul `deploy` passe en `runs-on: self-hosted`, et seulement lui — c'est
+le seul job qui a besoin d'atteindre `vm-prod`.
+
+**Risque assumé et sa limite :** un runner self-hosted exécute ce que la
+pipeline lui donne, sur la vraie machine. Sur un dépôt public, n'importe
+qui pourrait proposer une pull request hostile. Ici le risque reste nul
+tant que `deploy` ne se déclenche que sur un push direct vers `main` —
+donc uniquement du code qu'on a fusionné soi-même, jamais une PR externe.
+
+**Vérifications :**
+- Job minimal (`hostname` + `docker ps`) sur `runs-on: self-hosted` →
+  sort le nom de cette machine et les conteneurs qui y tournent
+  réellement (`vm-prod` visible), remplacé ensuite par le vrai job de
+  déploiement (voir section suivante).
+- `runs-on: ubuntu-latest` sur le même job → aucune trace de `vm-prod`,
+  comme attendu, deux mondes séparés.
+- `./run.sh` arrêté puis un commit poussé → le job reste `Queued` sans
+  erreur, comportement normal du côté GitHub, pas une panne à
+  diagnostiquer.
+
+### Job de déploiement : ssh-agent, scp, docker compose à distance (2026-08-05)
+
+Cible : `/srv/todo` sur `vm-prod`, deux fichiers. `compose.yml`
+([deploy/compose.yml](deploy/compose.yml)) versionné dans le dépôt,
+envoyé par la pipeline à chaque déploiement — il ne construit plus
+l'image (`image: gabrielmartin09/todo-api:${TAG}`, `TAG` fourni par
+l'environnement, jamais codé en dur). `.env` copié une seule fois, à la
+main, directement sur la machine cible : il ne sort jamais du dépôt, et
+il n'y entre jamais.
+
+**La clé privée ne touche jamais le disque du runner** : `webfactory/ssh-agent`
+charge `DEPLOY_SSH_KEY` en mémoire dans un agent SSH le temps du job ;
+`scp`/`ssh` s'authentifient via l'agent, jamais via un fichier de clé
+écrit sur disque. Secrets créés : `DEPLOY_SSH_KEY` (contenu de
+`deploy_key`), `DEPLOY_HOST` (`localhost`, le runner tourne sur la même
+machine que `vm-prod`), `DEPLOY_PORT` (`2222`), `DEPLOY_USER` (`root`).
+
+Le déploiement se résume à `cd /srv/todo && TAG=<sha> docker compose up -d`
+joué en SSH, suivi d'un `curl` en boucle sur `/health` qui fait échouer
+le job si l'API ne répond pas — pas de job vert sans preuve que l'API
+tourne vraiment.
+
+**Bug rencontré :** premier déploiement en échec, `no matching manifest
+for linux/arm64/v8`. L'image publiée par `build` (sur `ubuntu-latest`,
+amd64) n'existait qu'en `amd64` ; `vm-prod` tourne sur ce Mac, en arm64.
+Correctif : `docker/setup-qemu-action` + `platforms:
+linux/amd64,linux/arm64` sur `docker/build-push-action`, image publiée
+en multi-arch. Un détail qui n'apparaît que parce que le runner de
+déploiement et celui de build n'ont pas la même architecture — invisible
+si tout tournait sur `ubuntu-latest`.
+
+**Vérifications :**
+- **Chaîne complète depuis `main`** : push sur `main` (`919eb48`) →
+  `test`, `build`, `deploy` tous verts, aucune commande tapée à la main.
+  `curl http://localhost:3000/health` → `{"status":"ok",...}`,
+  `docker ps` sur `vm-prod` confirme `todo-api:919eb48…` et `todo-db` en
+  cours d'exécution.
+- **Branche de travail = aucun déploiement** : push sur
+  `ci-verify/deploy-check` → `test` vert, `build` et `deploy` tous les
+  deux `skipped`. La prod ne bouge que depuis `main`.
+- **Secret mal orthographié → panne localisée et propre** : `DEPLOY_USER`
+  temporairement changé en une valeur invalide, push sur `main`
+  (`1e0dfd7`) → `test` et `build` restent verts, `deploy` échoue à
+  l'étape `scp` avec `Permission denied
+  (publickey,password,keyboard-interactive)`, message clair. Log relu
+  ligne par ligne : secrets masqués (`***`) partout, aucune trace de
+  clé privée, même dans les logs de nettoyage de l'agent SSH. Secret
+  restauré immédiatement après.
