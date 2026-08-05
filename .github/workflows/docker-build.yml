@@ -114,10 +114,10 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -p "${{ secrets.DEPLOY_PORT }}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Send compose.yml to target
+      - name: Send deploy config to target
         run: |
-          scp -P "${{ secrets.DEPLOY_PORT }}" deploy/compose.yml \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/todo/compose.yml"
+          scp -r -P "${{ secrets.DEPLOY_PORT }}" deploy/. \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/todo/"
 
       - name: Deploy on target
         run: |

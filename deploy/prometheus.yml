@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 5s # court, pour voir les effets pendant le cours
+
+scrape_configs:
+  - job_name: todo-api
+    static_configs:
+      - targets: ['todo-api:3000'] # le nom du service, pas une adresse IP

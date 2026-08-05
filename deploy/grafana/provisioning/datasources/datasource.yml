@@ -1,0 +1,11 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    # nom de service sur le reseau interne du compose, jamais localhost:9090
+    # (localhost depuis le conteneur Grafana designe Grafana lui-meme)
+    url: http://prometheus:9090
+    isDefault: true
