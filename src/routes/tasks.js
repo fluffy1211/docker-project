@@ -1,5 +1,6 @@
 const express = require('express');
 const Task = require('../models/task');
+const { tasksCreatedTotal } = require('../metrics');
 
 const router = express.Router();
 const MAX_DESCRIPTION_LENGTH = 1000;
@@ -14,6 +15,7 @@ router.post('/', async (req, res, next) => {
       return res.status(400).json({ error: `description must be at most ${MAX_DESCRIPTION_LENGTH} characters` });
     }
     const task = await Task.create(description);
+    tasksCreatedTotal.inc();
     res.status(201).json(task);
   } catch (err) {
     next(err);
