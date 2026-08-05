@@ -589,3 +589,55 @@ fichiers avaient été commités avant l'ajout de la règle — restés
 suivis malgré tout. `git rm -r --cached node_modules` : retirés du
 suivi, laissés sur disque, aucun impact sur `npm ci` en CI (reconstruit
 depuis `package-lock.json` à chaque run).
+
+### Phase 8 : Prometheus et Grafana sur la machine cible (2026-08-05)
+
+Surveillance intégrée à la stack de prod, dans `deploy/compose.yml`,
+même réseau que `todo-api`/`todo-db` — Prometheus joint l'API par
+`todo-api:3000`, aucun port supplémentaire exposé pour ça. Config et
+dashboard versionnés dans le dépôt (`deploy/prometheus.yml`,
+`deploy/grafana/`), jamais modifiés à la main en prod : le `deploy` job
+envoie maintenant tout l'arbre `deploy/` par `scp -r`, plus seulement
+`compose.yml`.
+
+Datasource Grafana provisionnée à `http://prometheus:9090` — le nom de
+service sur le réseau interne, pas `localhost:9090` (qui depuis le
+conteneur Grafana désignerait Grafana lui-même, le piège classique
+signalé dans le brief). Dashboard provisionné automatiquement au
+démarrage (`deploy/grafana/provisioning/`), quatre panneaux, un par
+golden signal : `up` (disponibilité), `sum(rate(http_requests_total[1m]))`
+(trafic), part de `5xx` (erreurs), `histogram_quantile(0.95, ...)` sur
+l'histogramme de durée (latence p95).
+
+**Piège de port propre à cette maquette :** `vm-prod` (le conteneur qui
+joue la machine cible depuis la phase 3) avait déjà réservé le port
+hôte `3001` pour le dev local, donc son port `3001` interne est
+remappé sur `3002` côté Mac réel (`docker run ... -p 3002:3001`).
+Grafana, dans ce compose, écoute bien sur `3001` *à l'intérieur* de
+`vm-prod` — mais depuis le navigateur du poste de dev, l'adresse est
+`http://localhost:3002`, pas `3001`. Un niveau de plus que le brief
+(qui suppose un accès direct à la machine cible), propre au fait que
+la "machine cible" est elle-même un conteneur sur cette machine.
+
+**Vérifications :**
+- `docker stop todo-api` sur la cible → `up` passe à `0` en **14
+  secondes** (sous les 15s attendus), confirmé par polling direct sur
+  l'API Prometheus (`/api/v1/query`). `docker start todo-api` restauré
+  ensuite, `up` revenu à `1`.
+- Datasource et dashboard provisionnés automatiquement au démarrage de
+  Grafana (`/api/datasources`, `/api/search` confirment les deux sans
+  action manuelle).
+- Requêtes `up`, trafic et p95 confirmées non vides via l'API
+  Prometheus avant même d'ouvrir Grafana dans un navigateur — un
+  panneau vide aurait signifié une source de données ou un nom de
+  métrique faux, jamais "Grafana qui bugge".
+
+**Relevé du Journal de bord (golden signals) :**
+
+| Moment | up | Requêtes/s | Taux d'erreur | p95 |
+|---|---|---|---|---|
+| Au repos, avant la boucle de charge | `1` | `0.24` (résiduel, health checks) | `0%` (pas de données 5xx) | `16ms` |
+| Pendant la boucle de charge (2 min, `GET /api/tasks` + `POST` + `GET /api/tasks/inexistant`) | `1` | `11.2` | `32.6%` (le tiers de requêtes vise `/inexistant`, id non-UUID → `500`, pas `404`) | `22ms` |
+| Pendant l'incident de la phase 10 | — | — | — | — |
+
+Troisième ligne à remplir en phase 10.
