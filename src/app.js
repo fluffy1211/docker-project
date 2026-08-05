@@ -25,3 +25,4 @@ if (require.main === module) {
 module.exports = app;
 // trivial change for verification
 // ci-verify: missing-secret check
+// ci-verify: misspelled DEPLOY_USER must fail cleanly
