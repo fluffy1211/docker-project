@@ -1,0 +1,38 @@
+services:
+  todo-api:
+    container_name: todo-api # nom fixe : la pipeline et les scripts comptent dessus
+    image: gabrielmartin09/todo-api:${TAG} # ${TAG} vient de l'environnement, pas du fichier
+    environment:
+      - PORT=3000
+      - PGHOST=todo-db
+      - PGPORT=5432
+      - PGUSER=todo
+      - PGDATABASE=todo
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    depends_on:
+      todo-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  todo-db:
+    container_name: todo-db
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: todo
+      POSTGRES_USER: todo
+    env_file:
+      - .env
+    volumes:
+      - todo-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "todo", "-d", "todo"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  todo-db-data:
