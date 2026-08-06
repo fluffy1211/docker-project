@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: todo-api
+  namespace: todo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: todo-api
+  template:
+    metadata:
+      labels:
+        app: todo-api
+    spec:
+      containers:
+        - name: todo-api
+          # placeholder le temps qu'un sha post-renommage DB_HOST/DB_USER/
+          # DB_PASSWORD soit construit par la pipeline (arm64) : les tags
+          # existants sur Docker Hub datent d'avant ce renommage et d'avant
+          # le passage du build en arm64 natif (voir docker-build.yml).
+          # À remplacer par gabrielmartin09/todo-api:<sha> dès qu'il existe.
+          image: nginx:alpine
+          ports:
+            - containerPort: 3000
