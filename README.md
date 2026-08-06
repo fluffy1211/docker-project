@@ -26,6 +26,7 @@ Table des matières :
 - [Phase 18 : retour arrière, chronométré contre celui d'hier](#phase-18--retour-arrière-chronométré-contre-celui-dhier-2026-08-06)
 - [Phase 19 : jusqu'où serrer les ressources](#phase-19--jusquoù-serrer-les-ressources-2026-08-06)
 - [Phase 20 : cinq pannes, dont deux qu'il absorbe tout seul](#phase-20--cinq-pannes-dont-deux-quil-absorbe-tout-seul-2026-08-06)
+- [Phase 21 : namespace manquant, et la preuve en conditions réelles](#phase-21--namespace-manquant-et-la-preuve-en-conditions-réelles-2026-08-06)
 
 ---
 
@@ -870,3 +871,48 @@ a réellement été observé.
   même de décoder `.incident`.
 - `.incident` ajouté à `.gitignore` : c'est une réponse de débogage
   locale, jamais destinée au dépôt.
+
+---
+
+### Phase 21 : namespace manquant, et la preuve en conditions réelles (2026-08-06)
+
+**Trou trouvé par relecture, pas par un lecteur :** une revue de code
+sur l'ensemble des 12 phases (deux sous-agents, un axe Standards et un
+axe Spec) a repéré ce que personne n'avait remarqué en testant à la
+main — aucun manifeste ne déclare le namespace `todo` lui-même. Chaque
+commande de ce journal fonctionnait parce que le namespace existait
+déjà, créé une fois à la main en phase 17 (implicite, jamais versionné)
+: un clone frais du dépôt aurait échoué dès le premier `kubectl apply`
+avec `namespaces "todo" not found`. Corrigé : `k8s/namespace.yaml`
+ajouté, référencé dans les prérequis de
+`docs/PROCEDURE_DEPLOIEMENT.md`.
+
+**La vraie preuve, celle qu'aucun test manuel ne remplace :** les 15
+commits de la migration poussés sur `main`, runner self-hosted relancé,
+pipeline observée de bout en bout par son API (`gh run list`) plutôt
+que par supposition — deux fois de suite, sans une seule commande
+tapée à la main sur le cluster entre les deux :
+
+1. Premier push (les 15 commits) : `test` et `db-tests` verts, `build`
+   pousse une image taguée au sha du commit, `deploy` exécute
+   `kubectl set image` + `kubectl rollout status` réels. Résultat
+   observé sur le cluster, pas supposé : trois pods `todo-api` neufs
+   `1/1 Running`, image `gabrielmartin09/todo-api:0ab4ddb…`, `/health`
+   et `/api/tasks` répondent `200` via l'Ingress.
+2. Deuxième push (le seul fichier changé : le tag pinné dans
+   `k8s/todo-api-deployment.yaml`) : nouvelle image construite,
+   nouveau rollout, cluster basculé sur `6604694…` sans intervention.
+   Exactement le comportement que la phrase d'ouverture de ce projet
+   demandait — *"un push suffit pour que le cluster le sache"* — vérifié
+   deux fois, pas affirmé une fois.
+
+**Vérifications :**
+- `kubectl get deployment todo-api -n todo -o jsonpath='{...image}'`
+  après chaque push reflète le sha du commit poussé, jamais un
+  ancien tag laissé en place.
+- `curl` sur `/health` et `/api/tasks` via l'Ingress répond `200` après
+  chaque rollout, pas seulement `kubectl rollout status` qui se
+  déclare vert.
+- `k8s/namespace.yaml` appliqué manuellement une fois pour confirmer
+  qu'il ne casse rien sur un namespace déjà existant (`kubectl apply`
+  est idempotent), avant d'être intégré au dépôt.
