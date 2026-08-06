@@ -22,6 +22,7 @@ Table des matières :
 - [Phase 14 : ménage, node_modules sorti du suivi git](#phase-14--ménage-node_modules-sorti-du-suivi-git-2026-08-05)
 - [Phase 15 : Prometheus et Grafana sur la machine cible](#phase-15--prometheus-et-grafana-sur-la-machine-cible-2026-08-05)
 - [Phase 16 : procédure de déploiement](#phase-16--procédure-de-déploiement-2026-08-05)
+- [Phase 17 : rolling update sous charge, mesuré](#phase-17--rolling-update-sous-charge-mesuré-2026-08-06)
 
 ---
 
@@ -723,3 +724,40 @@ dashboard, durée normale (~2 minutes).
   suite (`scp: realpath /srv/tod/: No such file`), avant même
   d'atteindre le point de vérification de l'étape suivante. Rien ne
   passe en silence.
+
+---
+
+### Phase 17 : rolling update sous charge, mesuré (2026-08-06)
+
+Migration vers `todo-cluster` (k3d) : `todo-api` en 3 replicas derrière
+un `Service`, `strategy.rollingUpdate` avec `maxUnavailable: 0` /
+`maxSurge: 1` — aucun pod sortant avant qu'un nouveau soit prêt.
+Protocole : `charge.sh 30` dans un terminal, `kubectl set image` +
+`kubectl rollout status` dans un second, pendant que la charge tourne.
+
+| Déploiement | Requêtes échouées | Secondes d'indisponibilité | Temps de convergence totale |
+|---|---|---|---|
+| Hier, SSH manuel ([phase 11](#phase-11--rejouer-et-revenir-en-arrière-2026-08-05)) | non mesuré (pas de générateur de charge utilisé hier) | non mesuré, un seul conteneur remplacé en place | **119s** (pipeline complète, push à `/health` ok) |
+| Aujourd'hui, rolling update (`maxUnavailable: 0`) | **0** / 215 | **0s** | **11s** |
+| Comparaison, `maxUnavailable` par défaut (25%) | **0** / 213 | **0s** | ~10s |
+
+**Note honnête sur la troisième ligne :** la vérification "remettre
+`maxUnavailable` par défaut fait remonter le compteur d'échecs"
+attendue par le brief **ne s'est pas reproduite ici** — 0 échec dans
+les deux cas. Explication : la `readinessProbe` retire un pod du
+`Service` avant même qu'il soit tué (et le nouveau n'y entre qu'une
+fois prêt), donc le nombre d'endpoints disponibles ne tombe jamais à
+zéro dans les deux réglages, sur un cluster local où les pods
+démarrent en quelques secondes. L'écart entre les deux réglages
+existerait avec moins de replicas (`replicas: 1` verrait
+`maxUnavailable` par défaut retirer l'unique pod avant qu'un nouveau
+soit prêt) ou un démarrage de conteneur plus lent — pas démontré ici
+pour rester fidèle à ce qui a été mesuré, pas à ce qui était attendu.
+
+**Vérifications :**
+- `charge.sh` relancé une deuxième fois sur le même déploiement :
+  total proche du premier (213 vs 215 requêtes sur 30s, même ordre de
+  grandeur).
+- `kubectl rollout status` attend la convergence complète (`1 old
+  replicas are pending termination` avant `successfully rolled out`),
+  pas seulement le début de la mise à jour.

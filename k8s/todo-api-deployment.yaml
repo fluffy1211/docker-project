@@ -5,6 +5,10 @@ metadata:
   namespace: todo
 spec:
   replicas: 3
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: todo-api
