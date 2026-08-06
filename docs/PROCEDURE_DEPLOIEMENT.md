@@ -1,33 +1,39 @@
 # Procédure de déploiement — Todo API
 
-Ce document explique comment déployer la Todo API sur la machine cible,
-comment vérifier que ça a marché, et comment revenir en arrière si ce
-n'est pas le cas. Le déploiement est automatique (push sur `main`
-déclenche la pipeline GitHub Actions) ; cette procédure décrit ce que
-la pipeline fait, pour pouvoir la rejouer à la main si elle est en
-panne, l'auditer, ou diagnostiquer un incident.
+Ce document explique comment déployer la Todo API sur `todo-cluster`
+(Kubernetes, via k3d), comment vérifier que ça a marché, et comment
+revenir en arrière si ce n'est pas le cas. Le déploiement est
+automatique (push sur `main` déclenche la pipeline GitHub Actions) ;
+cette procédure décrit ce que la pipeline fait, pour pouvoir la
+rejouer à la main si elle est en panne, l'auditer, ou diagnostiquer un
+incident.
 
-Durée normale d'un déploiement complet (`test` + `db-tests` + `build` +
-`deploy`) : **environ 2 minutes**. Au-delà de 5 minutes sans que
-`deploy` ait démarré ou terminé, quelque chose ne va pas — voir
+Il n'y a plus de SSH dans cette procédure : la cible est le cluster
+qui tourne sur la même machine que le runner self-hosted, joint par
+`kubectl`, jamais par un accès distant à une VM.
+
+Durée normale d'un déploiement complet (`test` + `db-tests` + `build`
++ `deploy`) : **environ 2 minutes**, `deploy` lui-même convergeant en
+quelques secondes une fois l'image poussée. Au-delà de 5 minutes sans
+que `deploy` ait démarré ou terminé, quelque chose ne va pas — voir
 _Pannes connues_ plus bas.
 
-## Prérequis
+## Accès attendu pour intervenir
 
-Avant de commencer, avoir sous la main :
-
-- **Accès SSH à la machine cible** : la clé privée `deploy_key` (jamais
-  commitée, cherchez-la auprès de qui a fait le déploiement précédent
-  ou générez-en une nouvelle et mettez à jour le secret GitHub
-  `DEPLOY_SSH_KEY` et `authorized_keys` sur la cible).
-- **Adresse et port de la machine cible** : voir les secrets GitHub
-  `DEPLOY_HOST` et `DEPLOY_PORT` (Settings > Secrets and variables >
-  Actions du dépôt). Sur la maquette locale de ce projet :
-  `DEPLOY_HOST=localhost`, `DEPLOY_PORT=2222`, `DEPLOY_USER=root`.
-- **Emplacement des fichiers sur la cible** : tout vit dans `/srv/todo`
-  — `compose.yml`, `prometheus.yml`, `grafana/` (poussés par la
-  pipeline à chaque déploiement) et `.env` (copié une seule fois à la
-  main, ne part jamais du dépôt, n'y entre jamais).
+- **`kubectl` configuré sur `todo-cluster`** : `k3d cluster create`
+  fusionne automatiquement les identifiants dans `~/.kube/config` à la
+  création du cluster. Vérifier avant toute commande :
+  ```
+  kubectl config current-context
+  ```
+  **Vérification** : doit répondre `k3d-todo-cluster`. Si ce n'est pas
+  le cas, `kubectl config use-context k3d-todo-cluster` avant de
+  continuer — toute commande lancée sur le mauvais contexte agit sur
+  un autre cluster sans avertissement.
+- **Namespace `todo`** : tous les objets applicatifs y vivent. Ajouter
+  `-n todo` à chaque commande `kubectl` de cette procédure (ou `kubectl
+  config set-context --current --namespace=todo` une fois pour toute
+  la session).
 - **Accès en écriture au dépôt** `fluffy1211/docker-project`, branche
   `main`, pour déclencher un déploiement en poussant du code.
 - **Identifiants Docker Hub** : l'image se trouve sur
@@ -45,25 +51,31 @@ Avant de commencer, avoir sous la main :
    au sha du commit.
    - **Vérification** : `gabrielmartin09/todo-api:<sha du commit>`
      apparaît dans la liste des tags sur Docker Hub.
-4. Le job `deploy` envoie `compose.yml` + `prometheus.yml` + `grafana/`
-   sur la cible, puis lance `docker compose up -d` avec le nouveau
-   tag, puis vérifie `/health`.
+4. Le job `deploy` exécute `kubectl set image deployment/todo-api
+   todo-api=gabrielmartin09/todo-api:<sha> -n todo`, puis `kubectl
+   rollout status deployment/todo-api -n todo --timeout=120s`.
    - **Vérification** : le job `deploy` est vert dans l'onglet Actions
-     _et_ `curl -s http://<DEPLOY_HOST>:3000/health` répond
-     `{"status":"ok",...}` _et_ le panneau **Disponibilité** du
-     dashboard Grafana affiche `1`.
+     _et_ `kubectl describe deployment todo-api -n todo` montre le
+     nouveau sha dans l'image des pods _et_ `curl -s -H "Host:
+     todo.localhost" http://localhost:8080/health` répond
+     `{"status":"ok",...}`.
 
 Si l'une de ces vérifications échoue, ne pas repousser un nouveau
 commit en espérant que ça passe : lire le log du job en échec
 (_Pannes connues_ plus bas couvre les cas les plus fréquents), et si
 la prod est cassée, passer directement au retour arrière ci-dessous.
+Le job `deploy` lui-même refuse de se déclarer vert si le rollout ne
+converge pas dans le délai fixé — un rollout bloqué (image
+inexistante, sonde qui ne passe jamais) fait échouer la pipeline,
+jamais un faux succès.
 
 ## Déploiement manuel (si la pipeline est indisponible)
 
-À jouer depuis un poste avec `deploy_key` et un accès réseau à la
-cible.
+À jouer depuis un poste avec `kubectl` configuré sur `todo-cluster`
+(voir _Accès attendu_ ci-dessus) et accès à Docker Hub.
 
-1. Se connecter à Docker Hub, puis construire et pousser l'image :
+1. Construire et pousser l'image (si elle n'existe pas déjà pour ce
+   sha) :
    ```
    docker login -u gabrielmartin09
    docker buildx build --platform linux/arm64 \
@@ -72,91 +84,133 @@ cible.
    **Vérification** : `docker pull gabrielmartin09/todo-api:<sha>`
    réussit depuis n'importe quel poste.
 
-2. Envoyer la configuration sur la cible :
+2. Mettre à jour le `Deployment` :
    ```
-   scp -r -i deploy_key -P <DEPLOY_PORT> deploy/. \
-     <DEPLOY_USER>@<DEPLOY_HOST>:/srv/todo/
+   kubectl set image deployment/todo-api todo-api=gabrielmartin09/todo-api:<sha> -n todo
    ```
-   **Vérification** :
-   `ssh -i deploy_key -p <DEPLOY_PORT> <DEPLOY_USER>@<DEPLOY_HOST> "ls /srv/todo"`
-   liste `compose.yml`, `prometheus.yml`, `grafana`, et `.env`
-   (`.env` doit déjà être là — cette commande ne le touche pas).
+   **Vérification** : `kubectl get pods -n todo -l app=todo-api`
+   montre de nouveaux pods apparaître (nouveau suffixe de nom).
 
-3. Déployer :
+3. Attendre la convergence :
    ```
-   ssh -i deploy_key -p <DEPLOY_PORT> <DEPLOY_USER>@<DEPLOY_HOST> \
-     "cd /srv/todo && TAG=<sha> docker compose up -d"
+   kubectl rollout status deployment/todo-api -n todo --timeout=120s
    ```
-   **Vérification** : la commande se termine sans `Error response
-   from daemon`. `docker ps` sur la cible montre `todo-api`,
-   `todo-db`, `prometheus`, `grafana` tous `Up`.
+   **Vérification** : la commande affiche `deployment "todo-api"
+   successfully rolled out` et rend la main. Si elle échoue ou
+   n'aboutit jamais (`ImagePullBackOff`, sonde qui ne passe jamais),
+   voir _Pannes connues_ plus bas — ne pas attendre indéfiniment.
 
 4. Confirmer que l'API répond :
    ```
-   curl -s http://<DEPLOY_HOST>:3000/health
+   curl -s -H "Host: todo.localhost" http://localhost:8080/health
    ```
    **Vérification** : `{"status":"ok","timestamp":"..."}`. Si rien ne
-   répond après 30 secondes, passer au retour arrière.
+   répond, vérifier `kubectl get ingress -n todo` et `kubectl get pods
+   -n todo` avant de conclure à une régression applicative.
 
 ## Retour arrière
 
 **Qui décide** : quiconque constate que `/health` ne répond plus, que
-le panneau Disponibilité est à `0`, ou que le taux d'erreur grimpe de
-façon soutenue après un déploiement. Pas besoin d'attendre une
-validation — un rollback est réversible, le laisser en prod cassé ne
-l'est pas.
+`GET /api/tasks` renvoie des erreurs de façon soutenue, ou que
+`kubectl rollout status` ne converge pas après un déploiement. Pas
+besoin d'attendre une validation — un rollback est réversible, le
+laisser en prod cassé ne l'est pas.
 
-**Critère de déclenchement** : `/health` ne répond pas dans les 30
-secondes suivant un déploiement, ou le panneau Erreurs dépasse un taux
-anormal (au-delà de ce qu'on voit habituellement en dehors d'une
-boucle de charge volontaire) de façon soutenue sur plus d'une minute.
+**Critère de déclenchement** : `/health` ou une route applicative
+(`GET /api/tasks`) ne répond pas correctement dans les 30 secondes
+suivant un déploiement, ou le taux d'erreur grimpe de façon soutenue
+sur plus d'une minute (au-delà de ce qu'on voit habituellement en
+dehors d'une boucle de charge volontaire).
 
-**Commande** (la version précédente est déjà sur Docker Hub, pas
-besoin de rebuild) :
+**Attention, limite connue des sondes** (voir tableau de pannes
+ci-dessous, et la phase probes du Journal de bord) : `/health`
+confirme seulement que le serveur HTTP écoute, jamais que la base de
+données répond. Un déploiement peut avoir des pods `Running`/`1/1` et
+un `rollout status` vert tout en étant cassé pour de vrai — toujours
+tester une route qui touche la base (`GET /api/tasks`) avant de
+déclarer un déploiement sain, pas seulement `/health`.
+
+**Commande** :
 ```
-cd /srv/todo && TAG=<sha précédent connu bon> docker compose up -d
+kubectl rollout undo deployment/todo-api -n todo
+kubectl rollout status deployment/todo-api -n todo --timeout=120s
 ```
 
-**Attention** : cette commande seule ne suffit **que si le
-`compose.yml` n'a pas changé** entre les deux versions. Si la
-régression touche `compose.yml` lui-même (variable d'environnement,
-nom de service, port), remettre aussi l'ancien `compose.yml` avant de
-rejouer la commande — depuis un clone local du dépôt :
-```
-git show <sha précédent connu bon>:deploy/compose.yml > /tmp/compose-rollback.yml
-scp -i deploy_key -P <DEPLOY_PORT> /tmp/compose-rollback.yml \
-  <DEPLOY_USER>@<DEPLOY_HOST>:/srv/todo/compose.yml
-```
-puis rejouer la commande de retour arrière ci-dessus.
+Revient à la révision précédente — image **et** spec du pod (probes,
+ressources, env) en une seule commande, contrairement à l'ancien
+monde SSH où le tag et le `compose.yml` étaient deux choses séparées
+à restaurer.
 
-**Vérification du retour arrière** : `curl -s
-http://<DEPLOY_HOST>:3000/health` répond `ok`, et le panneau
-Disponibilité repasse à `1`.
+Pour cibler une révision précise plutôt que la précédente :
+```
+kubectl rollout history deployment/todo-api -n todo
+kubectl rollout undo deployment/todo-api -n todo --to-revision=<N>
+```
 
-Pour retrouver le sha précédent connu bon : `git log --oneline main`
-dans le dépôt, ou l'historique des tags sur Docker Hub
-(`gabrielmartin09/todo-api`), ou le dashboard Grafana (dernier moment
-où le panneau Disponibilité était stable à `1`).
+**Vérification du retour arrière** : `curl -s -H "Host:
+todo.localhost" http://localhost:8080/health` répond `ok`, **et**
+`curl -s -o /dev/null -w '%{http_code}' -H "Host: todo.localhost"
+http://localhost:8080/api/tasks` répond `200` (pas seulement
+`/health`, voir la limite ci-dessus).
+
+**Si rien n'a encore été déployé** (`Deployment` sans historique de
+rollout), `kubectl rollout undo` échoue proprement :
+```
+error: no rollout history found for deployment "todo-api"
+```
+Rien n'est laissé à moitié en place — ce n'est pas un cas à corriger,
+juste un signal qu'il n'y a rien à annuler.
 
 ## Pannes connues et leur signature
 
-| Panne | Où ça casse | Signature dans le dashboard / les logs | Diagnostic | Correctif |
+| Panne | Signature dans `kubectl get pods` | Signature dans `describe`/events | Se répare seule ? | Remède |
 |---|---|---|---|---|
-| Secret Docker Hub manquant ou retiré | job `build`, étape "Log in to Docker Hub" | Aucun changement dans le dashboard (rien n'est déployé, l'ancienne version tourne encore) | Log du job `build` : `Error: Username and password required` | Restaurer `DOCKERHUB_USERNAME`/`DOCKERHUB_TOKEN` dans les secrets du dépôt |
-| Secret de déploiement mal orthographié (`DEPLOY_USER`, `DEPLOY_HOST`, `DEPLOY_PORT`) | job `deploy`, étape scp ou ssh | Aucun changement dans le dashboard (le déploiement n'a jamais atteint la cible) | Log du job `deploy` : `Permission denied` ou `Connection refused`/`timed out` | Corriger le secret concerné dans Settings > Secrets |
-| `PGHOST` (ou toute variable de connexion) faux dans `compose.yml` | conteneur `todo-api` sur la cible, au démarrage | Panneau Disponibilité tombe à `0` (ou reste instable, redémarrages en boucle) ; `docker logs todo-api` montre `ENOTFOUND` ou `ECONNREFUSED` | `docker ps -a` sur la cible : `todo-api` en `Restarting` | Corriger `deploy/compose.yml` dans le dépôt, redéployer. Si déjà en prod : retour arrière avec restauration du `compose.yml` (voir plus haut) |
-| Port `3000` déjà occupé sur la cible par un autre conteneur | `docker compose up -d` sur la cible, au moment de démarrer `todo-api` | Panneau Disponibilité tombe à `0` et **reste** à `0` (contrairement aux autres pannes de cette liste, celle-ci touche la prod même en déploiement manuel) ; `docker ps -a` montre `todo-api` en `Exited` | Message exact : `Bind for 0.0.0.0:3000 failed: port is already allocated` | Identifier le conteneur fautif (`docker ps` sur la cible, chercher qui publie `3000`), l'arrêter ou le reconfigurer, puis rejouer `docker compose up -d` |
-| Build QEMU plante sur `npm ci` (émulation arm64 sur un runner amd64) | job `build`, étape "Build and push" | Aucun changement dans le dashboard (rien n'est construit ni déployé) | Log du job `build` : `qemu: uncaught target signal 4 (Illegal instruction)` | Ne pas émuler : builder nativement sur un runner de la même architecture que la cible (déjà fait, `build` tourne en `self-hosted` arm64, plus de QEMU dans ce pipeline) |
-| Retour arrière vers un tag qui n'existe pas sur Docker Hub | `docker compose up -d` (rollback manuel) | Aucun changement dans le dashboard : le conteneur existant n'est jamais arrêté avant que le pull échoue | Message exact : `manifest for gabrielmartin09/todo-api:<tag> not found: manifest unknown` | Vérifier le sha exact (`git log`, ou tags Docker Hub) et rejouer avec le bon |
+| Pod supprimé | pod disparaît puis un nouveau apparaît (nouveau nom) en quelques secondes | `Scheduled` → `Pulled`/`Created`/`Started` sur le nouveau pod | **Oui** | Aucun — la boucle de réconciliation recrée le pod manquant |
+| Processus tué dans le conteneur | attendu : `RESTARTS` s'incrémente, conteneur relancé en place | attendu : événement de redémarrage sur le même pod | **Oui** (en théorie — voir note ci-dessous) | Aucun en principe ; si le symptôme persiste sans `RESTARTS` qui bouge, traiter comme une anomalie d'environnement, pas comme une vraie panne applicative |
+| Tag d'image inexistant | nouveau pod bloqué `0/1 ImagePullBackOff`, anciens pods restent `Running` | `Failed to pull image` puis `Back-off pulling image` | **Non** | `kubectl set image` vers un tag existant, ou `kubectl rollout undo` |
+| Clé du Secret supprimée (`DB_USER`/`DB_PASSWORD`) | pods `1/1 Running`, rien d'anormal visible | aucun événement — les sondes ne testent que `/health`, jamais la base | **Non**, silencieux (`/health` reste `ok`, seul `GET /api/tasks` → `500` le révèle) | Restaurer la clé (`kubectl apply -f k8s/todo-secret.yaml`), puis `kubectl rollout restart deployment/todo-api -n todo` |
+| Limite mémoire trop basse | `0/1 CrashLoopBackOff`, `RESTARTS` grimpe | `Last State: Terminated`, `Reason: OOMKilled`, `Exit Code: 137` | **Non** | Remonter `resources.limits.memory` dans `k8s/todo-api-deployment.yaml`, `kubectl apply -f` |
+| `kubectl` pointé sur le mauvais cluster (contexte non précisé) | toute commande semble réussir ou échouer, mais sur un cluster/namespace qui n'est pas `todo-cluster`/`todo` — aucune trace de l'effet attendu sur le vrai cluster | `kubectl get pods -n todo` peut renvoyer `No resources found` ou des pods sans rapport | **Non** — ce n'est pas une panne du cluster, c'est un opérateur qui agit au mauvais endroit | Toujours vérifier `kubectl config current-context` avant une commande d'urgence (voir _Accès attendu_ en haut de ce document) ; corriger avec `kubectl config use-context k3d-todo-cluster` |
+| `ConfigMap` modifié mais pod jamais redémarré | pod reste `1/1 Running`, aucune erreur | rien dans les événements — ce n'est pas un crash | **Non**, silencieux (l'ancienne valeur reste active dans l'environnement déjà chargé du conteneur) | `kubectl rollout restart deployment/todo-api -n todo` pour forcer les pods à relire le `ConfigMap` |
+
+**Note sur "processus tué dans le conteneur" :** ce cas est documenté
+d'après le comportement attendu de Kubernetes (le kubelet redémarre un
+conteneur dont le process principal meurt). Sur cette maquette (k3d
+imbriqué dans un moteur de conteneurs de bureau), l'envoi du signal via
+`kubectl exec ... -- kill` n'a pas produit d'effet observable lors du
+diagnostic de la phase 20 du Journal de bord — anomalie d'environnement
+documentée là, pas un comportement à corriger dans les manifestes.
+
+## Limite connue : `/health` ne garantit pas que la base répond
+
+`/health` répond `{"status":"ok",...}` dès que le serveur HTTP Express
+écoute — il n'exécute aucune requête vers Postgres. Conséquence directe
+: `readinessProbe` et `livenessProbe`, toutes deux basées sur
+`/health`, peuvent laisser un pod `1/1 Ready` alors que la base est
+injoignable (`todo-db` scalé à `0`, mot de passe supprimé du Secret,
+etc.) — `GET /api/tasks` répond `500` pendant que tout, côté cluster,
+a l'air normal.
+
+Ce choix est documenté, pas corrigé : un `/health` qui interroge la
+base à chaque appel protégerait de ce mensonge, mais exposerait
+l'application à une cascade de sondes qui échouent toutes en même
+temps si la base ralentit seulement un peu (les trois replicas
+perdraient leur readiness simultanément). En pratique : ne jamais
+se fier à `/health` seul pour valider un déploiement ou un retour
+arrière — toujours tester une route qui touche réellement la base.
 
 ## Vérifications post-déploiement, en une ligne
 
 ```
-curl -s http://<DEPLOY_HOST>:3000/health && echo OK
+curl -s -H "Host: todo.localhost" http://localhost:8080/health && \
+curl -s -o /dev/null -w ' [%{http_code}]\n' -H "Host: todo.localhost" http://localhost:8080/api/tasks
 ```
 
-Et dans Grafana (`http://<adresse de la cible>:3001`, ou le port
-remappé si la cible est elle-même conteneurisée derrière un `docker
-run -p`) : panneau **Disponibilité** à `1`, panneau **Trafic** non nul
-si du trafic est attendu, panneau **Erreurs** proche de son niveau
-habituel, panneau **Latence (p95)** stable.
+Et côté cluster :
+```
+kubectl get pods -n todo -l app=todo-api
+kubectl rollout status deployment/todo-api -n todo
+```
+`READY` à `3/3` sur tous les pods `todo-api`, `rollout status`
+répondant immédiatement `successfully rolled out` (pas de rollout en
+cours).
