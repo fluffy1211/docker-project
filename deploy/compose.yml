@@ -4,10 +4,10 @@ services:
     image: gabrielmartin09/todo-api:${TAG} # ${TAG} vient de l'environnement, pas du fichier
     environment:
       - PORT=3000
-      - PGHOST=todo-db
-      - PGPORT=5432
-      - PGUSER=todo
-      - PGDATABASE=todo
+      - DB_HOST=todo-db
+      - DB_PORT=5432
+      - DB_USER=todo
+      - DB_NAME=todo
     env_file:
       - .env
     ports:

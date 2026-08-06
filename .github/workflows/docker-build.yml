@@ -60,11 +60,11 @@ jobs:
       - name: Run DB integration tests
         run: npm run test:db
         env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: todo
-          PGPASSWORD: todo_pw
-          PGDATABASE: todo
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_USER: todo
+          DB_PASSWORD: todo_pw
+          DB_NAME: todo
 
   build:
     needs: [test, db-tests]

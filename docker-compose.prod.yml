@@ -5,10 +5,10 @@ services:
       - "3001:3000"
     environment:
       - PORT=3000
-      - PGHOST=postgres
-      - PGPORT=5432
-      - PGUSER=todo
-      - PGDATABASE=todo
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=todo
+      - DB_NAME=todo
     env_file:
       - .env
     depends_on:
