@@ -30,8 +30,11 @@ _Pannes connues_ plus bas.
   le cas, `kubectl config use-context k3d-todo-cluster` avant de
   continuer — toute commande lancée sur le mauvais contexte agit sur
   un autre cluster sans avertissement.
-- **Namespace `todo`** : tous les objets applicatifs y vivent. Ajouter
-  `-n todo` à chaque commande `kubectl` de cette procédure (ou `kubectl
+- **Namespace `todo`** : tous les objets applicatifs y vivent. Créé par
+  `kubectl apply -f k8s/namespace.yaml` (à faire une seule fois par
+  cluster, avant le tout premier déploiement — absent, tout le reste
+  échoue avec `namespaces "todo" not found`). Ajouter `-n todo` à
+  chaque commande `kubectl` de cette procédure (ou `kubectl
   config set-context --current --namespace=todo` une fois pour toute
   la session).
 - **Accès en écriture au dépôt** `fluffy1211/docker-project`, branche
