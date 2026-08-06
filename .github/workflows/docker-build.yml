@@ -99,39 +99,17 @@ jobs:
   deploy:
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: self-hosted # au lieu de ubuntu-latest : ce job tourne chez vous
+    runs-on: self-hosted # runner et todo-cluster vivent sur la même machine
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Load deploy key into ssh-agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
-
-      - name: Trust target host key
+      - name: Update todo-api image to this commit's sha
         run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -p "${{ secrets.DEPLOY_PORT }}" "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+          kubectl set image deployment/todo-api \
+            todo-api=gabrielmartin09/todo-api:${{ github.sha }} \
+            -n todo
 
-      - name: Send deploy config to target
+      - name: Wait for rollout to converge
         run: |
-          scp -r -P "${{ secrets.DEPLOY_PORT }}" deploy/. \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/srv/todo/"
-
-      - name: Deploy on target
-        run: |
-          ssh -p "${{ secrets.DEPLOY_PORT }}" "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
-            "cd /srv/todo && TAG=${{ github.sha }} docker compose up -d"
-
-      - name: Verify /health responds
-        run: |
-          for i in $(seq 1 10); do
-            if curl -sf "http://${{ secrets.DEPLOY_HOST }}:3000/health"; then
-              echo "API is healthy"
-              exit 0
-            fi
-            sleep 3
-          done
-          echo "Health check failed"
-          exit 1
+          kubectl rollout status deployment/todo-api -n todo --timeout=120s
