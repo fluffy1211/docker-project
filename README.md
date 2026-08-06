@@ -23,7 +23,7 @@ Table des matières :
 - [Phase 15 : Prometheus et Grafana sur la machine cible](#phase-15--prometheus-et-grafana-sur-la-machine-cible-2026-08-05)
 - [Phase 16 : procédure de déploiement](#phase-16--procédure-de-déploiement-2026-08-05)
 - [Phase 17 : rolling update sous charge, mesuré](#phase-17--rolling-update-sous-charge-mesuré-2026-08-06)
-
+- [Phase 18 : retour arrière, chronométré contre celui d'hier](#phase-18--retour-arrière-chronométré-contre-celui-dhier-2026-08-06)
 ---
 
 ### Phase 1 : Dockerfile de production (2026-08-03)
@@ -761,3 +761,40 @@ pour rester fidèle à ce qui a été mesuré, pas à ce qui était attendu.
 - `kubectl rollout status` attend la convergence complète (`1 old
   replicas are pending termination` avant `successfully rolled out`),
   pas seulement le début de la mise à jour.
+
+---
+
+### Phase 18 : retour arrière, chronométré contre celui d'hier (2026-08-06)
+
+Régression volontaire : une route cassée (`GET /api/tasks` renvoie
+toujours `500`, `/health` reste `ok` — le serveur écoute, la route
+non). Déployée via `kubectl set image` comme un vrai push cassé le
+serait, `kubectl rollout status` a même laissé passer le rollout (les
+sondes ne testent que `/health`, cohérent avec la limite documentée
+plus haut à propos des probes).
+
+**Chronométrage :**
+- `T_constat` (`curl /api/tasks` → `500`, régression confirmée) :
+  début du chrono.
+- `kubectl rollout undo deployment/todo-api -n todo` +
+  `kubectl rollout status` jusqu'à convergence, puis poll de
+  `/api/tasks` jusqu'à `200`.
+- **Temps total constat → rétablissement : 7 secondes.**
+
+**Comparaison avec hier** ([phase 11](#phase-11--rejouer-et-revenir-en-arrière-2026-08-05),
+retour arrière SSH manuel + restauration de `compose.yml`) :
+**64 secondes**. Écart attendu : hier demandait un geste manuel en
+plus du redéploiement (renvoyer le `compose.yml` par `scp` avant de
+rejouer `docker compose up -d`) ; `kubectl rollout undo` recharge à la
+fois l'image et la spec du pod en une seule commande, sans dépendre
+d'un fichier à retransmettre séparément.
+
+**Vérifications :**
+- `kubectl rollout history deployment/todo-api -n todo` liste plusieurs
+  révisions ; `kubectl rollout undo --to-revision=<N>` testé vers une
+  révision non adjacente (pas seulement la précédente), a bien changé
+  l'image du pod vers celle de cette révision.
+- `kubectl rollout undo` sur un `Deployment` fraîchement créé, jamais
+  déployé une deuxième fois : `error: no rollout history found for
+  deployment "<nom>"` — échec propre, rien de laissé à moitié en
+  place.
