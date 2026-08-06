@@ -24,6 +24,7 @@ Table des matières :
 - [Phase 16 : procédure de déploiement](#phase-16--procédure-de-déploiement-2026-08-05)
 - [Phase 17 : rolling update sous charge, mesuré](#phase-17--rolling-update-sous-charge-mesuré-2026-08-06)
 - [Phase 18 : retour arrière, chronométré contre celui d'hier](#phase-18--retour-arrière-chronométré-contre-celui-dhier-2026-08-06)
+- [Phase 19 : jusqu'où serrer les ressources](#phase-19--jusquoù-serrer-les-ressources-2026-08-06)
 ---
 
 ### Phase 1 : Dockerfile de production (2026-08-03)
@@ -798,3 +799,35 @@ d'un fichier à retransmettre séparément.
   déployé une deuxième fois : `error: no rollout history found for
   deployment "<nom>"` — échec propre, rien de laissé à moitié en
   place.
+
+---
+
+### Phase 19 : jusqu'où serrer les ressources (2026-08-06)
+
+`todo-api` n'avait ni `requests` ni `limits`. `metrics-server` fourni
+d'office par k3s, `kubectl top pods` disponible sans rien installer.
+
+**Protocole** : serrer `limits.memory`, appliquer, `kubectl top pods`
+au repos puis sous `charge.sh`, noter si le pod tient ou finit
+`OOMKilled` (exit `137`).
+
+| `limits.memory` | Résultat sous `charge.sh` |
+|---|---|
+| `64Mi` | tient, ~25Mi mesurés sous charge |
+| `32Mi` | tient, ~18-24Mi mesurés sous charge |
+| `16Mi` | **casse** : un pod redémarre (`exit 137`, `RESTARTS` à `1`), le rollout ne converge jamais (`kubectl rollout status` → `timed out waiting for the condition`) |
+
+**Valeur retenue : `requests.memory: 24Mi` / `limits.memory: 32Mi`**,
+`requests.cpu: 10m` / `limits.cpu: 200m` — un cran au-dessus de la
+valeur qui casse, sous la charge de `charge.sh` (~0.1s entre requêtes,
+un seul client). Confirmé : à ce réglage, un rolling update
+(`kubectl set image` + `charge.sh` 25s en parallèle) converge avec
+**0 requête échouée**, même preuve qu'en phase 17, ressources serrées
+plutôt que généreuses.
+
+**Vérifications :**
+- `16Mi` reproductible : deuxième tentative, même symptôme (`exit
+  137`, rollout jamais convergé).
+- Au réglage retenu (`32Mi`), `kubectl get pods` : `RESTARTS` reste à
+  `0`, `Last State` ne montre aucun `OOMKilled` après plusieurs
+  minutes sous charge.
