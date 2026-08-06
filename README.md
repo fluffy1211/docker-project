@@ -6,31 +6,36 @@ Application todo conteneurisée (API Node, service de stats Python, Postgres) av
 
 Table des matières :
 
-- [Phase 1 : Dockerfile de production](#phase-1--dockerfile-de-production-2026-08-03)
-- [Phase 2 : Persistance PostgreSQL](#phase-2--persistance-postgresql-2026-08-03)
-- [Phase 3 : Network custom](#phase-3--network-custom-2026-08-03)
-- [Phase 4 : Docker Compose](#phase-4--docker-compose-2026-08-03)
-- [Phase 5 : Second service : stats-api en Python](#phase-5--second-service--stats-api-en-python-2026-08-03)
-- [Phase 6 : Registry et déploiement depuis les images publiées](#phase-6--registry-et-déploiement-depuis-les-images-publiées-2026-08-03)
-- [Phase 7 : CI, build et push automatique de todo-api](#phase-7--ci-build-et-push-automatique-de-todo-api-2026-08-05)
-- [Phase 8 : Maquette de machine de production, en local](#phase-8--maquette-de-machine-de-production-en-local-2026-08-05)
-- [Phase 9 : Runner self-hosted, à côté de la machine cible](#phase-9--runner-self-hosted-à-côté-de-la-machine-cible-2026-08-05)
-- [Phase 10 : Job de déploiement, ssh-agent, scp, docker compose à distance](#phase-10--job-de-déploiement-ssh-agent-scp-docker-compose-à-distance-2026-08-05)
-- [Phase 11 : rejouer, et revenir en arrière](#phase-11--rejouer-et-revenir-en-arrière-2026-08-05)
-- [Phase 12 : tests d'intégration contre une vraie base, dans la pipeline](#phase-12--tests-dintégration-contre-une-vraie-base-dans-la-pipeline-2026-08-05)
-- [Phase 13 : rendre l'API mesurable, avec prom-client](#phase-13--rendre-lapi-mesurable-avec-prom-client-2026-08-05)
-- [Phase 14 : ménage, node_modules sorti du suivi git](#phase-14--ménage-node_modules-sorti-du-suivi-git-2026-08-05)
-- [Phase 15 : Prometheus et Grafana sur la machine cible](#phase-15--prometheus-et-grafana-sur-la-machine-cible-2026-08-05)
-- [Phase 16 : procédure de déploiement](#phase-16--procédure-de-déploiement-2026-08-05)
-- [Phase 17 : rolling update sous charge, mesuré](#phase-17--rolling-update-sous-charge-mesuré-2026-08-06)
-- [Phase 18 : retour arrière, chronométré contre celui d'hier](#phase-18--retour-arrière-chronométré-contre-celui-dhier-2026-08-06)
-- [Phase 19 : jusqu'où serrer les ressources](#phase-19--jusquoù-serrer-les-ressources-2026-08-06)
-- [Phase 20 : cinq pannes, dont deux qu'il absorbe tout seul](#phase-20--cinq-pannes-dont-deux-quil-absorbe-tout-seul-2026-08-06)
-- [Phase 21 : namespace manquant, et la preuve en conditions réelles](#phase-21--namespace-manquant-et-la-preuve-en-conditions-réelles-2026-08-06)
+- **3 août 2026**
+  - [Phase 1 : Dockerfile de production](#phase-1--dockerfile-de-production-2026-08-03)
+  - [Phase 2 : Persistance PostgreSQL](#phase-2--persistance-postgresql-2026-08-03)
+  - [Phase 3 : Network custom](#phase-3--network-custom-2026-08-03)
+  - [Phase 4 : Docker Compose](#phase-4--docker-compose-2026-08-03)
+  - [Phase 5 : Second service : stats-api en Python](#phase-5--second-service--stats-api-en-python-2026-08-03)
+  - [Phase 6 : Registry et déploiement depuis les images publiées](#phase-6--registry-et-déploiement-depuis-les-images-publiées-2026-08-03)
+- **5 août 2026**
+  - [Phase 7 : CI, build et push automatique de todo-api](#phase-7--ci-build-et-push-automatique-de-todo-api-2026-08-05)
+  - [Phase 8 : Maquette de machine de production, en local](#phase-8--maquette-de-machine-de-production-en-local-2026-08-05)
+  - [Phase 9 : Runner self-hosted, à côté de la machine cible](#phase-9--runner-self-hosted-à-côté-de-la-machine-cible-2026-08-05)
+  - [Phase 10 : Job de déploiement, ssh-agent, scp, docker compose à distance](#phase-10--job-de-déploiement-ssh-agent-scp-docker-compose-à-distance-2026-08-05)
+  - [Phase 11 : rejouer, et revenir en arrière](#phase-11--rejouer-et-revenir-en-arrière-2026-08-05)
+  - [Phase 12 : tests d'intégration contre une vraie base, dans la pipeline](#phase-12--tests-dintégration-contre-une-vraie-base-dans-la-pipeline-2026-08-05)
+  - [Phase 13 : rendre l'API mesurable, avec prom-client](#phase-13--rendre-lapi-mesurable-avec-prom-client-2026-08-05)
+  - [Phase 14 : ménage, node_modules sorti du suivi git](#phase-14--ménage-node_modules-sorti-du-suivi-git-2026-08-05)
+  - [Phase 15 : Prometheus et Grafana sur la machine cible](#phase-15--prometheus-et-grafana-sur-la-machine-cible-2026-08-05)
+  - [Phase 16 : procédure de déploiement](#phase-16--procédure-de-déploiement-2026-08-05)
+- **6 août 2026**
+  - [Phase 17 : rolling update sous charge, mesuré](#phase-17--rolling-update-sous-charge-mesuré-2026-08-06)
+  - [Phase 18 : retour arrière, chronométré contre celui d'hier](#phase-18--retour-arrière-chronométré-contre-celui-dhier-2026-08-06)
+  - [Phase 19 : jusqu'où serrer les ressources](#phase-19--jusquoù-serrer-les-ressources-2026-08-06)
+  - [Phase 20 : cinq pannes, dont deux qu'il absorbe tout seul](#phase-20--cinq-pannes-dont-deux-quil-absorbe-tout-seul-2026-08-06)
+  - [Phase 21 : namespace manquant, et la preuve en conditions réelles](#phase-21--namespace-manquant-et-la-preuve-en-conditions-réelles-2026-08-06)
 
 ---
 
-### Phase 1 : Dockerfile de production (2026-08-03)
+### 3 août 2026
+
+#### Phase 1 : Dockerfile de production (2026-08-03)
 
 Passage du Dockerfile de dev à un Dockerfile de prod, multi-stage.
 
@@ -48,7 +53,7 @@ Passage du Dockerfile de dev à un Dockerfile de prod, multi-stage.
 
 ---
 
-### Phase 2 : Persistance PostgreSQL (2026-08-03)
+#### Phase 2 : Persistance PostgreSQL (2026-08-03)
 
 Les tâches vivaient en mémoire (perdues à chaque redémarrage du conteneur API).
 Ajout d'un conteneur Postgres à part, lancé à la main avec `docker run`, volume
@@ -82,7 +87,7 @@ ce qu'on imagine possible avec un seul fichier déclaratif.
 
 ---
 
-### Phase 3 : Network custom (2026-08-03)
+#### Phase 3 : Network custom (2026-08-03)
 
 L'IP interne trouvée à l'étape précédente est fragile (change si le conteneur
 est recréé) et rien n'empêchait de publier le port Postgres vers l'hôte par
@@ -127,7 +132,7 @@ conteneur, résolu via le DNS interne du network custom).
 
 ---
 
-### Phase 4 : Docker Compose (2026-08-03)
+#### Phase 4 : Docker Compose (2026-08-03)
 
 Remplacement des étapes manuelles (`docker network create`, `docker volume
 create`, deux `docker run` à rallonge) par un seul `docker-compose.yml` :
@@ -156,7 +161,7 @@ ps`, `docker compose logs -f`, `docker compose down` (garde le volume).
 
 ---
 
-### Phase 5 : Second service : stats-api en Python (2026-08-03)
+#### Phase 5 : Second service : stats-api en Python (2026-08-03)
 
 Ajout de `stats-api`, un service FastAPI (fourni complet, rien à écrire côté
 Python) qui lit la même base Postgres que `api` et expose le nombre de
@@ -184,7 +189,7 @@ par défaut du fichier, pas besoin de le nommer explicitement), avec le même
 
 ---
 
-### Phase 6 : Registry et déploiement depuis les images publiées (2026-08-03)
+#### Phase 6 : Registry et déploiement depuis les images publiées (2026-08-03)
 
 `todo-api` et `stats-api` poussés sur Docker Hub (`gabrielmartin13/todo-api`,
 `gabrielmartin13/stats-api`), tag `1.0.0` explicite plutôt que `latest`.
@@ -275,7 +280,9 @@ proprement au lieu de devenir injoignable.
 
 ---
 
-### Phase 7 : CI, build et push automatique de todo-api (2026-08-05)
+### 5 août 2026
+
+#### Phase 7 : CI, build et push automatique de todo-api (2026-08-05)
 
 Ajout de `.github/workflows/docker-build.yml`, deux jobs :
 - `test` : `npm ci` + `npm test`, déclenché sur push, toutes branches.
@@ -317,7 +324,7 @@ Docker Hub) plutôt que de le laisser traîner.
 
 ---
 
-### Phase 8 : Maquette de machine de production, en local (2026-08-05)
+#### Phase 8 : Maquette de machine de production, en local (2026-08-05)
 
 Avant de parler de vrai déploiement, une cible pour la pipeline : pas un
 vrai hébergeur, un conteneur `docker:28-dind` (Docker-in-Docker) avec son
@@ -366,7 +373,7 @@ droits restreints.
 
 ---
 
-### Phase 9 : Runner self-hosted, à côté de la machine cible (2026-08-05)
+#### Phase 9 : Runner self-hosted, à côté de la machine cible (2026-08-05)
 
 Le runner hébergé par GitHub ne peut pas joindre `vm-prod` : pas d'adresse
 publique, machine derrière la box. Solution : enregistrer ce poste comme
@@ -400,7 +407,7 @@ donc uniquement du code qu'on a fusionné soi-même, jamais une PR externe.
 
 ---
 
-### Phase 10 : Job de déploiement, ssh-agent, scp, docker compose à distance (2026-08-05)
+#### Phase 10 : Job de déploiement, ssh-agent, scp, docker compose à distance (2026-08-05)
 
 Cible : `/srv/todo` sur `vm-prod`, deux fichiers. `compose.yml`
 ([deploy/compose.yml](deploy/compose.yml)) versionné dans le dépôt,
@@ -451,7 +458,7 @@ si tout tournait sur `ubuntu-latest`.
 
 ---
 
-### Phase 11 : rejouer, et revenir en arrière (2026-08-05)
+#### Phase 11 : rejouer, et revenir en arrière (2026-08-05)
 
 **Redéploiement identique :** premier essai faussé par deux push
 enchaînés en quelques secondes (correctif README + commit vide) — le
@@ -532,7 +539,7 @@ code applicatif.
 
 ---
 
-### Phase 12 : tests d'intégration contre une vraie base, dans la pipeline (2026-08-05)
+#### Phase 12 : tests d'intégration contre une vraie base, dans la pipeline (2026-08-05)
 
 Le déploiement est automatique depuis la phase 10 : plus rien ne
 s'interpose entre un commit sur `main` et la prod. Les tests existants
@@ -593,7 +600,7 @@ Pipeline complète confirmée verte de bout en bout avec les quatre jobs :
 
 ---
 
-### Phase 13 : rendre l'API mesurable, avec prom-client (2026-08-05)
+#### Phase 13 : rendre l'API mesurable, avec prom-client (2026-08-05)
 
 Instrumentation isolée dans `src/metrics.js` — un seul commit, rien
 d'autre dedans, pour rester relisible dans trois semaines. `/metrics`
@@ -636,7 +643,7 @@ Exactement `3`, pas `1` (compteur mal placé) ni repartant de `0`
 
 ---
 
-### Phase 14 : ménage, node_modules sorti du suivi git (2026-08-05)
+#### Phase 14 : ménage, node_modules sorti du suivi git (2026-08-05)
 
 `node_modules` était dans `.gitignore` depuis le début, mais 595
 fichiers avaient été commités avant l'ajout de la règle — restés
@@ -646,7 +653,7 @@ depuis `package-lock.json` à chaque run).
 
 ---
 
-### Phase 15 : Prometheus et Grafana sur la machine cible (2026-08-05)
+#### Phase 15 : Prometheus et Grafana sur la machine cible (2026-08-05)
 
 Surveillance intégrée à la stack de prod, dans `deploy/compose.yml`,
 même réseau que `todo-api`/`todo-db` — Prometheus joint l'API par
@@ -700,7 +707,7 @@ Troisième ligne à remplir en phase 17.
 
 ---
 
-### Phase 16 : procédure de déploiement (2026-08-05)
+#### Phase 16 : procédure de déploiement (2026-08-05)
 
 Écrite dans [`docs/PROCEDURE_DEPLOIEMENT.md`](docs/PROCEDURE_DEPLOIEMENT.md) :
 prérequis, déploiement automatique (ce que fait la pipeline) et manuel
@@ -731,7 +738,9 @@ dashboard, durée normale (~2 minutes).
 
 ---
 
-### Phase 17 : rolling update sous charge, mesuré (2026-08-06)
+### 6 août 2026
+
+#### Phase 17 : rolling update sous charge, mesuré (2026-08-06)
 
 Migration vers `todo-cluster` (k3d) : `todo-api` en 3 replicas derrière
 un `Service`, `strategy.rollingUpdate` avec `maxUnavailable: 0` /
@@ -768,7 +777,7 @@ pour rester fidèle à ce qui a été mesuré, pas à ce qui était attendu.
 
 ---
 
-### Phase 18 : retour arrière, chronométré contre celui d'hier (2026-08-06)
+#### Phase 18 : retour arrière, chronométré contre celui d'hier (2026-08-06)
 
 Régression volontaire : une route cassée (`GET /api/tasks` renvoie
 toujours `500`, `/health` reste `ok` — le serveur écoute, la route
@@ -805,7 +814,7 @@ d'un fichier à retransmettre séparément.
 
 ---
 
-### Phase 19 : jusqu'où serrer les ressources (2026-08-06)
+#### Phase 19 : jusqu'où serrer les ressources (2026-08-06)
 
 `todo-api` n'avait ni `requests` ni `limits`. `metrics-server` fourni
 d'office par k3s, `kubectl top pods` disponible sans rien installer.
@@ -837,7 +846,7 @@ plutôt que généreuses.
 
 ---
 
-### Phase 20 : cinq pannes, dont deux qu'il absorbe tout seul (2026-08-06)
+#### Phase 20 : cinq pannes, dont deux qu'il absorbe tout seul (2026-08-06)
 
 `chaos.sh` ajouté, cinq scénarios rejoués un par un (plutôt qu'au
 hasard, pour garantir la couverture complète du tableau), puis une
@@ -874,7 +883,7 @@ a réellement été observé.
 
 ---
 
-### Phase 21 : namespace manquant, et la preuve en conditions réelles (2026-08-06)
+#### Phase 21 : namespace manquant, et la preuve en conditions réelles (2026-08-06)
 
 **Trou trouvé par relecture, pas par un lecteur :** une revue de code
 sur l'ensemble des 12 phases (deux sous-agents, un axe Standards et un
