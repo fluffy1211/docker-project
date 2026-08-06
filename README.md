@@ -25,6 +25,8 @@ Table des matières :
 - [Phase 17 : rolling update sous charge, mesuré](#phase-17--rolling-update-sous-charge-mesuré-2026-08-06)
 - [Phase 18 : retour arrière, chronométré contre celui d'hier](#phase-18--retour-arrière-chronométré-contre-celui-dhier-2026-08-06)
 - [Phase 19 : jusqu'où serrer les ressources](#phase-19--jusquoù-serrer-les-ressources-2026-08-06)
+- [Phase 20 : cinq pannes, dont deux qu'il absorbe tout seul](#phase-20--cinq-pannes-dont-deux-quil-absorbe-tout-seul-2026-08-06)
+
 ---
 
 ### Phase 1 : Dockerfile de production (2026-08-03)
@@ -831,3 +833,40 @@ plutôt que généreuses.
 - Au réglage retenu (`32Mi`), `kubectl get pods` : `RESTARTS` reste à
   `0`, `Last State` ne montre aucun `OOMKilled` après plusieurs
   minutes sous charge.
+
+---
+
+### Phase 20 : cinq pannes, dont deux qu'il absorbe tout seul (2026-08-06)
+
+`chaos.sh` ajouté, cinq scénarios rejoués un par un (plutôt qu'au
+hasard, pour garantir la couverture complète du tableau), puis une
+exécution réelle du script pour confirmer qu'il fonctionne (`.incident`
+→ panne 5 tirée, symptôme `CrashLoopBackOff` observé, cohérent).
+
+| # | Panne | Signature dans `kubectl get pods` | Signature dans `describe`/events | Se répare seule ? | Remède |
+|---|---|---|---|---|---|
+| 1 | Pod supprimé | pod disparaît puis un nouveau apparaît (nouveau nom) en quelques secondes | `Scheduled` → `Pulled`/`Created`/`Started` sur le nouveau pod | **Oui** | Aucun — la boucle de réconciliation recrée le pod manquant |
+| 2 | Processus tué dans le conteneur (`kill 1` / `kill -9 1`) | anomalie d'environnement : `RESTARTS` reste à `0`, PID 1 survit même à un `SIGKILL` envoyé via `kubectl exec` | aucun événement `Unhealthy`/`BackOff` | Non testable ici (voir note) | Attendu par la doc Kubernetes : le conteneur se termine, `RESTARTS` s'incrémente, kubelet le relance en place — comportement **non reproduit** dans cet environnement (k3d imbriqué dans OrbStack, plusieurs niveaux de conteneurs) : signal envoyé sans effet observable, documenté tel quel plutôt que masqué |
+| 3 | Tag d'image inexistant | nouveau pod bloqué `0/1 ImagePullBackOff`, anciens pods restent `Running` | `Failed to pull image` puis `Back-off pulling image` | **Non** | `kubectl set image` vers un tag existant (ou `kubectl rollout undo`) |
+| 4 | Clé du Secret supprimée (`DB_PASSWORD`) | pods `1/1 Running`, rien d'anormal visible | aucun événement — les sondes ne testent que `/health`, jamais la base | **Non** (silencieux : `/health` reste `ok`, seul `/api/tasks` → `500` le révèle) | Restaurer la clé dans `todo-secret` (`kubectl apply -f k8s/todo-secret.yaml`), `kubectl rollout restart deployment/todo-api` |
+| 5 | Limite mémoire trop basse (`8Mi`) | `0/1 CrashLoopBackOff`, `RESTARTS` grimpe | `Last State: Terminated`, `Reason: OOMKilled`, `Exit Code: 137` | **Non** | Remonter `resources.limits.memory` dans le manifeste (`kubectl apply -f k8s/todo-api-deployment.yaml`) |
+
+**Sur les deux qui se réparent seules :** seule la panne 1 (pod
+supprimé) s'est confirmée auto-réparée dans ce run — la boucle de
+réconciliation du `ReplicaSet` recrée un pod manquant sans
+intervention. La panne 2 (processus tué) est censée être la seconde
+(le kubelet redémarre un conteneur mort en place), mais n'a pas pu
+être déclenchée dans cet environnement : le signal envoyé via
+`kubectl exec ... -- kill` n'a produit aucun effet observable sur le
+PID 1 du conteneur, y compris `SIGKILL` — anomalie notée plutôt que
+contournée, cohérente avec la consigne de ne pas se mentir sur ce qui
+a réellement été observé.
+
+**Vérifications :**
+- `.incident` (`base64 -D -i .incident`) lu uniquement après diagnostic
+  posé, jamais avant.
+- Script exécuté une fois au hasard en conditions réelles : panne 5
+  tirée, symptôme (`CrashLoopBackOff`) cohérent avec le tableau avant
+  même de décoder `.incident`.
+- `.incident` ajouté à `.gitignore` : c'est une réponse de débogage
+  locale, jamais destinée au dépôt.
