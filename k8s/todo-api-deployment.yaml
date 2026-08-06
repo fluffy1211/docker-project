@@ -22,7 +22,7 @@ spec:
           # Tag écrasé à chaque déploiement par le job CI (kubectl set
           # image, voir .github/workflows/docker-build.yml) avec le sha du
           # commit poussé sur main. Valeur ici = dernier sha connu bon.
-          image: gabrielmartin09/todo-api:bda3c70
+          image: gabrielmartin09/todo-api:0ab4ddb3178db59f1c88e32f628524ba702798eb
           ports:
             - containerPort: 3000
           envFrom:
